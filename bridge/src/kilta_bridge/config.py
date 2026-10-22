@@ -21,10 +21,10 @@ class Settings:
     mcp_url: str = "http://localhost:8765/mcp"
     gemini_api_key: str = ""
     groq_api_key: str = ""
-    # Chain order: Gemini Flash -> Groq -> Gemini Flash-Lite -> Ollama.
-    model_primary: str = "gemini-3.5-flash"
+    # Chain order: Gemini Flash-Lite -> Groq -> Gemini Flash -> Ollama.
+    model_primary: str = "gemini-3.5-flash-lite"
     model_groq: str = "openai/gpt-oss-120b"
-    model_fallback: str = "gemini-3.5-flash-lite"
+    model_fallback: str = "gemini-3.5-flash"
     ollama_model: str = "qwen3:8b"
     ollama_host: str = "http://localhost:11434"
     groq_base_url: str = "https://api.groq.com/openai/v1"
@@ -37,6 +37,9 @@ class Settings:
     first_token_timeout: float = 20.0
     min_model_interval: float = 0.0  # pacing between model calls, for free-tier limits
     model_cooldown: float = 45.0  # skip a model this long after it failed
+    # Use only this link: primary, groq, fallback or ollama (blank = the whole chain).
+    model_only: str = ""
+    ollama_first_token_timeout: float = 120.0  # a cold local model has to load first
     turn_timeout: float = 120.0
     cors_origins: tuple[str, ...] = ("http://localhost:5173", "http://127.0.0.1:5173")
 
@@ -60,4 +63,5 @@ class Settings:
             first_token_timeout=float(e.get("KILTA_MODEL_TIMEOUT", d.first_token_timeout)),
             min_model_interval=float(e.get("KILTA_MODEL_MIN_INTERVAL", d.min_model_interval)),
             model_cooldown=float(e.get("KILTA_MODEL_COOLDOWN", d.model_cooldown)),
+            model_only=e.get("KILTA_MODEL_ONLY", "").strip().lower(),
         )

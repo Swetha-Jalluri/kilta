@@ -162,17 +162,6 @@ def test_which_errors_are_worth_retrying(error, expected):
     assert is_retryable(error) is expected
 
 
-def test_the_real_chain_order_is_gemini_groq_flash_lite_ollama():
-    settings = Settings(gemini_api_key="g", groq_api_key="q")
-    names = [link.name for link in build_chain(settings).links]
-    assert names == [
-        "gemini:gemini-3.5-flash",
-        "groq:openai/gpt-oss-120b",
-        "gemini:gemini-3.5-flash-lite",
-        "ollama:qwen3:8b",
-    ]
-
-
 def test_links_without_credentials_are_left_out_but_ollama_stays_last():
     assert [link.name for link in build_chain(Settings(groq_api_key="q")).links] == [
         "groq:openai/gpt-oss-120b",
@@ -316,3 +305,34 @@ async def test_a_spent_daily_quota_is_not_retried_and_the_model_is_skipped_for_h
     now[0] = 6 * 3600 + 1
     await run(chain)
     assert spent.calls == 2  # the cap lets it be tried again, in case the quota changed
+
+
+def test_model_only_keeps_a_single_link():
+    keys = {"gemini_api_key": "g", "groq_api_key": "q"}
+    for role, name in [
+        ("primary", "gemini:gemini-3.5-flash-lite"),
+        ("groq", "groq:openai/gpt-oss-120b"),
+        ("fallback", "gemini:gemini-3.5-flash"),
+        ("ollama", "ollama:qwen3:8b"),
+    ]:
+        chain = build_chain(Settings(model_only=role, **keys))
+        assert [link.name for link in chain.links] == [name]
+
+
+def test_model_only_rejects_a_typo_and_a_missing_key():
+    with pytest.raises(ValueError, match="must be one of"):
+        build_chain(Settings(model_only="gemini"))
+    with pytest.raises(ValueError, match="no API key"):
+        build_chain(Settings(model_only="groq"))
+
+
+def test_the_default_chain_order_is_flash_lite_groq_flash_ollama():
+    names = [
+        link.name for link in build_chain(Settings(gemini_api_key="g", groq_api_key="q")).links
+    ]
+    assert names == [
+        "gemini:gemini-3.5-flash-lite",
+        "groq:openai/gpt-oss-120b",
+        "gemini:gemini-3.5-flash",
+        "ollama:qwen3:8b",
+    ]

@@ -9,6 +9,7 @@ never assert wording, except that a withheld step's instruction must not be spok
 """
 
 import os
+from dataclasses import replace
 
 import httpx
 import pytest
@@ -32,23 +33,34 @@ pytestmark = pytest.mark.live
 
 def live_settings(**overrides) -> Settings:
     """Keys come from .env or the environment. Model IDs are the committed defaults, so the runs
-    are the same on every machine."""
+    are the same on every machine.
+
+    KILTA_LIVE_MODEL picks one link so a run touches only that model's quota:
+    primary | groq | fallback | ollama (or chain, the default, for the whole fallback chain).
+    """
     env = {**dotenv_values(REPO_ROOT / ".env"), **os.environ}
+    only = (env.get("KILTA_LIVE_MODEL") or "chain").strip().lower()
+    only = "" if only == "chain" else only
+    needed = {
+        "": ("GEMINI_API_KEY", "GROQ_API_KEY"),
+        "primary": ("GEMINI_API_KEY",),
+        "fallback": ("GEMINI_API_KEY",),
+        "groq": ("GROQ_API_KEY",),
+        "ollama": (),
+    }[only]
+    if missing := [k for k in needed if not env.get(k)]:
+        pytest.skip(f"missing {', '.join(missing)} in .env")
+    pace = 0.0 if only == "ollama" else float(env.get("KILTA_LIVE_PACE", 4))  # local: no pacing
     settings = Settings(
         gemini_api_key=env.get("GEMINI_API_KEY") or "", groq_api_key=env.get("GROQ_API_KEY") or ""
     )
-    missing = [k for k in ("GEMINI_API_KEY", "GROQ_API_KEY") if not env.get(k)]
-    if missing:
-        pytest.skip(f"missing {', '.join(missing)} in .env")
-    pace = float(env.get("KILTA_LIVE_PACE", 4))
-    from dataclasses import replace
-
     return replace(
         settings,
         min_model_interval=pace,
         retries=3,
         retry_base_delay=3.0,
         turn_timeout=420.0,
+        model_only=only,
         **overrides,
     )
 

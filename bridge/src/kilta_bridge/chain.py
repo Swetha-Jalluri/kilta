@@ -97,6 +97,7 @@ class Link:
     model: Model
     min_interval: float = 0.0
     first_token_timeout: float | None = None  # overrides the chain's
+    role: str = ""  # primary, groq, fallback or ollama
     _last_call: float = field(default=0.0, repr=False)
     down_until: float = field(default=0.0, repr=False)  # cooldown after a failure
 
@@ -132,6 +133,8 @@ class FallbackModel(Model):
         self._clock = clock
         self._sleep = sleep
         self.on_event = on_event or (lambda event: None)
+        # Chooses which tool specs each model call sees (set by the agent, from the engine state).
+        self.tool_filter: Callable[[list[Any]], list[Any]] | None = None
         self.last_used: str | None = None
         self.attempts: list[dict[str, Any]] = []
 
@@ -166,6 +169,8 @@ class FallbackModel(Model):
         return ready or self.links  # if everything is cooling down, try them all anyway
 
     async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):  # type: ignore[override]
+        if self.tool_filter and tool_specs:
+            tool_specs = self.tool_filter(tool_specs)
         candidates = self._candidates()
         for index, link in enumerate(candidates):
             for attempt in range(self.retries + 1):
@@ -243,14 +248,20 @@ class FallbackModel(Model):
             yield event
 
 
+ROLES = ("primary", "groq", "fallback", "ollama")
+
+
 def build_chain(
     settings: Settings, on_event: EventSink | None = None, sleep=asyncio.sleep
 ) -> FallbackModel:
-    """The real chain. Links without credentials are left out (Ollama needs none)."""
-    links: list[Link] = []
+    """The real chain. Links without credentials are left out (Ollama needs none).
+
+    `settings.model_only` keeps a single link (primary, groq, fallback or ollama), which is how
+    the live tests run on one model without touching the other models' quotas.
+    """
     interval = settings.min_model_interval
 
-    def gemini(model_id: str) -> Link:
+    def gemini(model_id: str, role: str) -> Link:
         from strands.models.gemini import GeminiModel
 
         model = GeminiModel(
@@ -258,7 +269,7 @@ def build_chain(
             model_id=model_id,
             params={"temperature": 0.4, "max_output_tokens": 600},
         )
-        return Link(f"gemini:{model_id}", model, interval)
+        return Link(f"gemini:{model_id}", model, interval, role=role)
 
     def groq() -> Link:
         from strands.models.openai import OpenAIModel
@@ -269,22 +280,48 @@ def build_chain(
             params={"temperature": 0.4, "max_tokens": 600},
         )
         return Link(
-            f"groq:{settings.model_groq}", model, interval, settings.groq_first_token_timeout
+            f"groq:{settings.model_groq}",
+            model,
+            interval,
+            settings.groq_first_token_timeout,
+            role="groq",
         )
 
     def ollama() -> Link:
         from strands.models.ollama import OllamaModel
 
-        model = OllamaModel(settings.ollama_host, model_id=settings.ollama_model)
-        return Link(f"ollama:{settings.ollama_model}", model, 0.0)
+        model = OllamaModel(
+            settings.ollama_host,
+            model_id=settings.ollama_model,
+            temperature=0.3,
+            max_tokens=600,
+            keep_alive="30m",
+            # Ollama's default context (4k tokens) would silently cut off the prompt and tools.
+            options={"num_ctx": 12288},
+            additional_args={"think": False},  # no hidden reasoning pass: keeps turns fast
+        )
+        return Link(
+            f"ollama:{settings.ollama_model}",
+            model,
+            0.0,
+            settings.ollama_first_token_timeout,
+            role="ollama",
+        )
 
+    links: list[Link] = []
     if settings.gemini_api_key:
-        links.append(gemini(settings.model_primary))
+        links.append(gemini(settings.model_primary, "primary"))
     if settings.groq_api_key:
         links.append(groq())
     if settings.gemini_api_key:
-        links.append(gemini(settings.model_fallback))
+        links.append(gemini(settings.model_fallback, "fallback"))
     links.append(ollama())
+    if settings.model_only:
+        if settings.model_only not in ROLES:
+            raise ValueError(f"KILTA_MODEL_ONLY must be one of {', '.join(ROLES)}")
+        links = [link for link in links if link.role == settings.model_only]
+        if not links:
+            raise ValueError(f"KILTA_MODEL_ONLY={settings.model_only}: that model has no API key")
     return FallbackModel(
         links,
         retries=settings.retries,

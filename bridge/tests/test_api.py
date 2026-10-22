@@ -303,3 +303,20 @@ def test_a_gate_cannot_be_confirmed_in_the_turn_it_is_asked(start_bridge):
     answered = bridge.turn("it's unplugged")  # the user's own reply, in its own turn
     assert [c["ok"] for c in answered["tool_calls"]] == [True, True]
     assert answered["card"]["step_number"] == 2
+
+
+def test_each_model_call_sees_only_the_tools_for_the_current_state(start_bridge):
+    model = scripted(
+        Plan([("start_repair", {"description": "beeping"})], say="Safety first."),
+        Plan([("safety_check", {"danger_reported": False})], say="Which appliance?"),
+    )
+    bridge = start_bridge([Link("scripted", model)])
+    bridge.turn("My dishwasher is beeping")
+    first_call, after_start = model.seen_tools[0], model.seen_tools[1]
+    assert "list_appliances" in first_call and "safety_check" in first_call  # no repair yet
+    assert set(after_start) == {"get_household", "start_repair", "safety_check", "get_repair_state"}
+    bridge.turn("No, nothing like that")
+    # the new turn starts in SAFETY_CHECK; once cleared the next call is in IDENTIFY
+    assert set(model.seen_tools[2]) == set(after_start)
+    assert {"identify_appliance", "lookup_orders"} <= set(model.seen_tools[3])
+    assert "next_step" not in model.seen_tools[3]

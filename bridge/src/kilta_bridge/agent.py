@@ -17,6 +17,7 @@ from .config import Settings
 from .events import EventBus
 from .mcp_probe import probe
 from .models import ToolCall, TurnRequest, TurnResponse
+from .tools import specs_for_state
 
 log = logging.getLogger("kilta.agent")
 
@@ -65,6 +66,8 @@ class KiltaAgent:
         self.client: MCPClient | None = None
         self.agent: Agent | None = None
         chain.on_event = self._chain_event
+        # Each model call sees only the tools that fit the engine's current state.
+        chain.tool_filter = lambda specs: specs_for_state(specs, self.state)
 
     # --- lifecycle -----------------------------------------------------------------------
 
