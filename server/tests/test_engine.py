@@ -655,3 +655,53 @@ def test_reset_keeps_the_seeded_past_repair_for_repeat_detection(data_dir):
     sid, diag = to_prepare(fresh)
     assert diag.card["repeat_count"] == 2 and "second time" in diag.say
     assert diag.card["last_repair"]["date"] == "2025-11-02"
+
+
+# --- second review ----------------------------------------------------------------------------
+
+
+def test_not_fixed_after_pause_and_resume_does_not_wedge_the_next_procedure(engine):
+    sid, _ = to_prepare(engine)
+    engine.next_step(sid)
+    engine.confirm_gate(sid)
+    for _ in range(5):
+        engine.next_step(sid)
+    engine.confirm_gate(sid)  # step 6, before-gate
+    engine.pause_repair(sid)
+    engine.resume_repair(sid)
+    assert engine.store.load_session(sid).reconfirm_gate == "clean-filter:check-sump"
+    out = engine.report_result(sid, fixed=False)
+    assert out.session.state == State.PREPARE and out.session.reconfirm_gate is None
+    first = engine.next_step(sid)
+    assert first.card["procedure_id"] == "check-drain-hose" and first.card["step_number"] == 1
+    assert engine.next_step(sid).reason == "gate_unconfirmed"
+    engine.confirm_gate(sid)
+    assert engine.next_step(sid).card["step_number"] == 2
+
+
+def test_a_stale_reconfirm_key_is_ignored_not_fatal(engine, store):
+    sid, _ = to_prepare(engine)
+    engine.next_step(sid)
+    session = store.load_session(sid)
+    session.reconfirm_gate = "some-other-procedure:gone"
+    store.save_session(session)
+    out = engine.next_step(sid)
+    assert out.refused and out.reason == "gate_unconfirmed"  # the real unplug gate
+    engine.confirm_gate(sid)
+    assert engine.next_step(sid).card["step_number"] == 2  # not wedged
+
+
+def test_danger_words_in_symptoms_are_caught_before_the_quick_checks_refusal(engine):
+    sid = engine.start_repair("priya", "beeping").session.id
+    engine.safety_check(sid, danger_reported=False)
+    engine.identify_appliance(sid, appliance_type="dishwasher")
+    engine.find_manual(sid)
+    out = engine.diagnose(sid, error_code="E24", symptoms="I smell gas")
+    assert out.session.state == State.SAFETY_RECHECK and out.reason is None
+    back = engine.safety_check(sid, danger_reported=False)
+    assert back.session.state == State.QUICK_CHECKS
+
+
+@pytest.mark.parametrize("text", ["it sparked", "smells burned", "it's smoky", "I got zapped"])
+def test_more_danger_word_forms_trigger_a_recheck(engine, text):
+    assert engine.start_repair("priya", text).session.state == State.SAFETY_RECHECK

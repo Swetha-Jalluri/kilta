@@ -1,8 +1,30 @@
 {
   "safety_question": "Before we touch anything: do you smell burning or gas, see smoke, sparks or flames, or feel a tingle or shock from it? Is there any water near a plug or cord?",
   "danger_keywords": [
-    "burning", "burnt", "smoke", "smoking", "spark", "sparks", "sparking", "fire", "flame", "flames",
-    "gas", "shock", "shocked", "electrocuted", "melting", "melted", "sizzling"
+    "burned",
+    "burning",
+    "burnt",
+    "electrocuted",
+    "fire",
+    "flame",
+    "flames",
+    "gas",
+    "melt",
+    "melted",
+    "melting",
+    "scorched",
+    "scorching",
+    "shock",
+    "shocked",
+    "sizzling",
+    "smoke",
+    "smoking",
+    "smoky",
+    "spark",
+    "sparked",
+    "sparking",
+    "sparks",
+    "zapped"
   ],
   "stop_instructions": [
     "Stop. Don't try to fix this yourself.",
@@ -11,8 +33,35 @@
     "Don't use it again until a qualified professional has checked it."
   ],
   "technician_only_topics": [
-    {"id": "gas", "keywords": ["gas line", "gas connection", "gas valve"], "reason": "Gas parts are never a DIY job."},
-    {"id": "refrigerant", "keywords": ["refrigerant", "freon", "compressor"], "reason": "Refrigerant and sealed-system work needs a licensed technician."},
-    {"id": "internal-wiring", "keywords": ["internal wiring", "rewire", "wiring inside", "circuit board", "control board", "heating element"], "reason": "Internal electrical work is technician only."}
+    {
+      "id": "gas",
+      "keywords": [
+        "gas line",
+        "gas connection",
+        "gas valve"
+      ],
+      "reason": "Gas parts are never a DIY job."
+    },
+    {
+      "id": "refrigerant",
+      "keywords": [
+        "refrigerant",
+        "freon",
+        "compressor"
+      ],
+      "reason": "Refrigerant and sealed-system work needs a licensed technician."
+    },
+    {
+      "id": "internal-wiring",
+      "keywords": [
+        "internal wiring",
+        "rewire",
+        "wiring inside",
+        "circuit board",
+        "control board",
+        "heating element"
+      ],
+      "reason": "Internal electrical work is technician only."
+    }
   ]
 }

@@ -269,11 +269,12 @@ class Engine:
         proc = self._procedure(s)
         if not proc:
             return None
-        if s.reconfirm_gate:
-            step_id = s.reconfirm_gate.split(":", 1)[1]
-            step = next(st for st in proc.steps if st.id == step_id)
-            assert step.gate
+        proc_id, _, step_id = (s.reconfirm_gate or "").partition(":")
+        step = next((st for st in proc.steps if st.id == step_id), None)
+        if proc_id == proc.id and step and step.gate:
+            assert s.reconfirm_gate
             return s.reconfirm_gate, step.gate.prompt, step.gate.kind
+        s.reconfirm_gate = None  # stale: it belonged to another procedure
         if s.step_index >= 0:
             step = proc.steps[s.step_index]
             key = _gate_key(proc, step.id)
@@ -647,6 +648,8 @@ class Engine:
             return err  # type: ignore[return-value]
         if refusal := self._guard(s, {State.QUICK_CHECKS, State.DIAGNOSE}):
             return refusal
+        if self._danger_in(symptoms):
+            return self._enter_recheck(s, symptoms)
         if s.state == State.QUICK_CHECKS and not s.quick_checks_shown:
             return self._refuse(
                 self._quick_checks_card(s), "quick_checks_first", "Simple things first. "
@@ -654,8 +657,6 @@ class Engine:
         manual = self._manual(s)
         appliance = self._appliance(s)
         assert manual and appliance
-        if self._danger_in(symptoms):
-            return self._enter_recheck(s, symptoms)
         s.symptoms = symptoms or s.symptoms
         if reason := self._technician_topic(symptoms):
             s.error_code = error_code or s.error_code
@@ -840,6 +841,7 @@ class Engine:
         s.procedure_index += 1
         if s.procedure_id:
             s.state, s.step_index, s.paused_step_index = State.PREPARE, -1, None
+            s.reconfirm_gate = None
             self._save(s, f"{proc.id} not fixed, trying next")
             return self._prepare(s)
         code = manual.error_code(s.error_code or "")
