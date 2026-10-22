@@ -564,6 +564,7 @@ def test_an_after_gate_tells_the_step_first(engine):
 def test_a_before_gate_never_returns_the_step_text_until_confirmed(engine):
     sid, step6 = to_dw_step_six(engine)
     assert step6.card["step_number"] == 6 and step6.card["text_withheld"] is True
+    assert step6.card["step_id"] is None  # "check-sump" would hint at the hidden step
     assert step6.card["gate"] == {
         "prompt": "Is the power still off?",
         "kind": "before",
@@ -597,7 +598,7 @@ def test_a_before_gate_never_returns_the_step_text_until_confirmed(engine):
     assert engine.next_step(sid).reason == "gate_unconfirmed"
     revealed = engine.confirm_gate(sid)
     assert SUMP_TEXT in revealed.say and revealed.card["text"].startswith(SUMP_TEXT)
-    assert revealed.card["text_withheld"] is False
+    assert revealed.card["text_withheld"] is False and revealed.card["step_id"] == "check-sump"
     assert engine.get_repair_state(sid).card["text"].startswith(SUMP_TEXT)
     assert engine.next_step(sid).card["step_number"] == 7
 
@@ -705,3 +706,103 @@ def test_danger_words_in_symptoms_are_caught_before_the_quick_checks_refusal(eng
 @pytest.mark.parametrize("text", ["it sparked", "smells burned", "it's smoky", "I got zapped"])
 def test_more_danger_word_forms_trigger_a_recheck(engine, text):
     assert engine.start_repair("priya", text).session.state == State.SAFETY_RECHECK
+
+
+# --- danger mentions, carried stops, resume after a before-gate -------------------------------
+
+
+def test_danger_words_with_a_no_danger_answer_are_logged_not_asked_twice(engine):
+    sid = engine.start_repair("priya", "it smells like burning plastic").session.id
+    out = engine.safety_check(sid, danger_reported=False, details="no, I don't smell any burning")
+    assert out.session.state == State.IDENTIFY  # one answer is enough
+    assert out.session.danger_mentions == ["burning"]  # the recheck text too, deduplicated
+
+    engine.identify_appliance(sid, appliance_id="dishwasher")
+    engine.find_manual(sid)
+    engine.quick_checks(sid)
+    mid = engine.safety_check(sid, danger_reported=False, details="now I smell smoke")
+    assert mid.session.state == State.QUICK_CHECKS and not mid.refused
+    assert mid.session.danger_mentions == ["burning", "smoke"]
+
+    engine.diagnose(sid, error_code="E15")
+    summary = engine.create_technician_summary(sid).card
+    assert summary["danger_mentions"] == ["burning", "smoke"]
+    assert (
+        "burning, smoke" in summary["safety_notes"]
+        or "burning and smoke" in summary["safety_notes"]
+    )
+    assert "nothing dangerous was happening" in summary["safety_notes"]
+
+
+def stopped_dishwasher_session(engine, store):
+    sid = engine.start_repair("priya", "I smell burning from the dishwasher").session.id
+    engine.safety_check(sid, danger_reported=False)  # first, an honest "no"...
+    engine.identify_appliance(sid, appliance_id="dishwasher")
+    engine.safety_check(sid, danger_reported=True, details="burning smell again")
+    assert store.load_session(sid).state == State.STOPPED
+    return sid
+
+
+def test_a_new_repair_after_a_stop_carries_the_safety_note(engine, store):
+    old = stopped_dishwasher_session(engine, store)
+    out = engine.start_repair("priya", "the dishwasher is beeping")
+    assert not out.refused and out.session.state == State.SAFETY_CHECK
+    assert out.card["prior_stop"]["session_id"] == old
+    assert "Earlier you reported burning with your Kelvara DW-300 dishwasher" in out.say
+    assert "Has a professional checked it since?" in out.say
+    assert out.say.endswith(store.safety["safety_question"])
+    # Still the normal flow afterwards, and the guard repeats the same question.
+    assert "Earlier you reported" in engine.next_step(out.session.id).say
+    assert engine.safety_check(out.session.id, danger_reported=False).session.state == (
+        State.IDENTIFY
+    )
+
+
+def test_a_stop_is_carried_when_the_appliance_is_not_named(engine, store):
+    stopped_dishwasher_session(engine, store)
+    out = engine.start_repair("lucia", "it is beeping again")
+    assert "Earlier you reported burning" in out.say
+
+
+def test_a_stop_is_not_carried_to_a_different_appliance(engine, store):
+    stopped_dishwasher_session(engine, store)
+    out = engine.start_repair("priya", "my washer shows E31")
+    assert out.session.prior_stop is None and "Earlier" not in out.say
+    # "dishwasher" must not be mistaken for "washer"
+    again = engine.start_repair("priya", "the dishwasher shows E24")
+    assert again.session.prior_stop is None  # newest session is the washer one, not a stop
+
+
+def test_only_a_stopped_session_is_carried(engine):
+    sid, _ = to_prepare(engine)
+    out = engine.start_repair("priya", "something else is beeping")
+    assert out.session.prior_stop is None and sid != out.session.id
+
+
+def test_resuming_right_after_a_before_gated_step_asks_its_gate_again(engine):
+    sid, _ = to_prepare(engine)
+    engine.next_step(sid)
+    engine.confirm_gate(sid)
+    for _ in range(4):
+        engine.next_step(sid)
+    engine.next_step(sid)  # step 6, withheld
+    revealed = engine.confirm_gate(sid)
+    assert SUMP_TEXT in revealed.say
+    step7 = engine.next_step(sid)
+    assert step7.card["step_number"] == 7 and step7.card["text_withheld"] is False
+    engine.pause_repair(sid)
+
+    resumed = engine.resume_repair(sid)
+    assert resumed.card["step_number"] == 7
+    assert resumed.card["gate"] == {
+        "prompt": "Is the power still off?",
+        "kind": "before",
+        "confirmed": False,
+    }
+    assert resumed.card["text"].startswith("Put the filter back")  # step 7 itself is not hidden
+    assert SUMP_TEXT not in resumed.say + json.dumps(resumed.card)  # step 6 is not replayed
+    blocked = engine.next_step(sid)
+    assert blocked.refused and blocked.reason == "gate_unconfirmed"
+    assert blocked.card["step_number"] == 7
+    engine.confirm_gate(sid)
+    assert engine.next_step(sid).card["step_number"] == 8

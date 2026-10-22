@@ -230,6 +230,10 @@ class Session(BaseModel):
     # Danger words in free text pause the repair here until safety_check answers explicitly.
     recheck_from: State | None = None
     recheck_text: str = ""
+    # Danger words the user used even though the explicit answer was "no danger".
+    danger_mentions: list[str] = Field(default_factory=list)
+    # A safety stop on an earlier repair, carried into this one so the question can follow up.
+    prior_stop: dict[str, Any] | None = None
 
     appliance_id: str | None = None
     manual_id: str | None = None

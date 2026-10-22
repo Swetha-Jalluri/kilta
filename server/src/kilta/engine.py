@@ -156,7 +156,14 @@ class Engine:
 
     def _safety_question(self, s: Session) -> Outcome:
         q = self.store.safety["safety_question"]
-        return self._out(s, q, {"type": "safety_question", "question": q})
+        card: dict[str, Any] = {"type": "safety_question", "question": q}
+        if s.prior_stop:
+            what = _words(s.prior_stop["words"]) or "a safety problem"
+            about = f" with your {s.prior_stop['appliance']}" if s.prior_stop["appliance"] else ""
+            follow_up = f"Earlier you reported {what}{about}. Has a professional checked it since?"
+            q = f"{follow_up} {q}"
+            card.update(question=q, prior_stop=s.prior_stop)
+        return self._out(s, q, card)
 
     def _recheck_question(self, s: Session) -> Outcome:
         say = (
@@ -331,7 +338,7 @@ class Engine:
             "blocked": blocked,
             "source": step.source.model_dump(),
             "procedure_id": proc.id,
-            "step_id": step.id,
+            "step_id": None if withheld else step.id,
             "minutes": proc.minutes,
             "tools": proc.tools,
             "procedure_number": s.procedure_index + 1,
@@ -453,9 +460,44 @@ class Engine:
         self._save(s, "fixed")
         return self._fixed(s)
 
+    def _danger_words(self, text: str) -> list[str]:
+        keywords = set(self.store.safety["danger_keywords"])
+        found = [w for w in re.findall(r"[a-z]+", text.lower()) if w in keywords]
+        return list(dict.fromkeys(found))
+
     def _danger_in(self, text: str) -> bool:
-        words = set(re.findall(r"[a-z]+", text.lower()))
-        return bool(words & set(self.store.safety["danger_keywords"]))
+        return bool(self._danger_words(text))
+
+    def _note_mentions(self, s: Session, text: str) -> None:
+        """Remember danger words that came with an explicit "no danger" answer."""
+        for word in self._danger_words(text):
+            if word not in s.danger_mentions:
+                s.danger_mentions.append(word)
+
+    def _prior_stop_for(self, description: str) -> dict[str, Any] | None:
+        """The newest session was a safety stop: carry it over unless the user is clearly
+        talking about a different appliance."""
+        prior = self.store.latest_session()
+        if not prior or prior.state != State.STOPPED:
+            return None
+        appliances = self.store.appliances()
+        said = description.lower()
+
+        def mentioned(kind: str) -> bool:
+            names = [kind] + [alias for alias, real in TYPE_ALIASES.items() if real == kind]
+            return any(re.search(rf"\b{re.escape(n)}\b", said) for n in names)
+
+        prior_appliance = next((a for a in appliances if a.id == prior.appliance_id), None)
+        if prior_appliance and not mentioned(prior_appliance.type):
+            if any(mentioned(a.type) for a in appliances if a.id != prior_appliance.id):
+                return None
+        words = self._danger_words(f"{prior.safety_notes} {prior.description}")
+        return {
+            "session_id": prior.id,
+            "words": words,
+            "appliance": prior_appliance.name if prior_appliance else None,
+            "details": prior.safety_notes,
+        }
 
     # --- tools: starting and safety -----------------------------------------------------------
 
@@ -468,7 +510,11 @@ class Engine:
                 refused=True,
                 reason="unknown_member",
             )
+        prior_stop = self._prior_stop_for(description)
         s = self.store.new_session(member_id.lower() if member_id else None, description)
+        if prior_stop:
+            s.prior_stop = prior_stop
+            self._save(s, f"carried safety stop from {prior_stop['session_id']}")
         if self._danger_in(description):
             return self._enter_recheck(s, description)
         return self._safety_question(s)
@@ -486,7 +532,8 @@ class Engine:
         # The explicit answer is the only thing that stops or clears. Words in `details` are
         # not scanned: "no, I don't smell any burning" must not count as danger.
         if danger_reported:
-            return self._enter_stop(s, details)
+            return self._enter_stop(s, details or s.recheck_text)
+        self._note_mentions(s, details)
         if s.state == State.SAFETY_RECHECK:
             return self._leave_recheck(s, details)
         if s.state == State.SAFETY_CHECK:
@@ -500,6 +547,7 @@ class Engine:
 
     def _leave_recheck(self, s: Session, details: str) -> Outcome:
         previous = s.recheck_from or State.SAFETY_CHECK
+        self._note_mentions(s, s.recheck_text)
         s.recheck_from, s.recheck_text = None, ""
         if previous == State.SAFETY_CHECK:
             s.safety_cleared, s.safety_notes, s.state = True, details, State.IDENTIFY
@@ -856,6 +904,18 @@ class Engine:
 
     # --- tools: handoff documents -------------------------------------------------------------
 
+    def _safety_notes(self, s: Session) -> str:
+        notes = [s.safety_notes] if s.safety_notes else []
+        if s.danger_mentions:
+            notes.append(
+                "The user used these words about danger, then answered that nothing "
+                f"dangerous was happening: {_words(s.danger_mentions)}."
+            )
+        if s.prior_stop:
+            earlier = _words(s.prior_stop["words"]) or "a safety problem"
+            notes.append(f"An earlier repair was stopped for safety ({earlier}).")
+        return " ".join(notes)
+
     def create_technician_summary(self, session_id: str | None = None) -> Outcome:
         s, err = self._resolve_any(session_id)
         if err or not s:
@@ -876,7 +936,8 @@ class Engine:
             "reported": s.description or s.symptoms,
             "tried": tried,
             "reason": s.handoff_reason,
-            "safety_notes": s.safety_notes,
+            "safety_notes": self._safety_notes(s),
+            "danger_mentions": s.danger_mentions,
             "source": {"manual_id": s.manual_id, "page": s.handoff_page}
             if s.handoff_page
             else None,
