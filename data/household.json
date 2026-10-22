@@ -1,0 +1,14 @@
+{
+  "id": "hh-demo",
+  "name": "Apartment 4B, Maple Court (fictional)",
+  "renter": true,
+  "landlord": {
+    "name": "Lakeview Property Management",
+    "contact": "Maintenance requests via the tenant portal"
+  },
+  "members": [
+    {"id": "priya", "name": "Priya", "language": "en", "confidence": "beginner", "pace": "slow"},
+    {"id": "lucia", "name": "Lucia", "language": "es", "confidence": "some", "pace": "normal"}
+  ],
+  "preferences": {"camera": "ask_first", "units": "us"}
+}

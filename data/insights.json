@@ -1,0 +1,10 @@
+{
+  "synthetic": true,
+  "note": "Synthetic aggregate data for the Kilta concept demo. Not real customer data.",
+  "entries": [
+    {"model": "DW-300", "error_code": "E24", "reports": 412, "fixed_at_home_pct": 78, "top_fix": "Clean the filter", "median_minutes": 14},
+    {"model": "DW-300", "error_code": "E15", "reports": 96, "fixed_at_home_pct": 0, "top_fix": "Technician visit", "median_minutes": 0},
+    {"model": "WM-500", "error_code": "E21", "reports": 233, "fixed_at_home_pct": 71, "top_fix": "Clean the pump filter", "median_minutes": 19},
+    {"model": "WM-500", "error_code": "E31", "reports": 87, "fixed_at_home_pct": 34, "top_fix": "Clean the pump filter", "median_minutes": 21}
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "id": "kelvara-wm500",
+  "title": "Kelvara WM-500 front-load washer manual (fictional)",
+  "brand": "Kelvara",
+  "model": "WM-500",
+  "appliance_type": "washer",
+  "model_sticker": {"location": "Inside the door rim, at the top.", "page": 3},
+  "model_code_format": "WM-500 followed by a 4-character variant, for example WM-500-R4T9.",
+  "quick_checks": [
+    {"id": "door-closed", "text": "Is the door fully closed? The panel shows a lock icon when a cycle starts.", "panel_labels": [], "source": {"manual_id": "kelvara-wm500", "page": 20}},
+    {"id": "hose-not-kinked", "text": "Is the drain hose behind the washer free of kinks?", "panel_labels": [], "source": {"manual_id": "kelvara-wm500", "page": 20}},
+    {"id": "load-balanced", "text": "Is the load too heavy or unbalanced?", "panel_labels": [], "source": {"manual_id": "kelvara-wm500", "page": 20}}
+  ],
+  "error_codes": [
+    {
+      "code": "E21", "meaning": "Slow drain", "page": 24,
+      "causes": ["Clogged pump filter (coin trap)", "Kinked hose"],
+      "diy": "yes", "procedure_ids": ["clean-pump-filter"]
+    },
+    {
+      "code": "E31", "meaning": "Drain pump fault", "page": 25,
+      "causes": ["Pump motor failed, if E31 remains after cleaning the pump filter"],
+      "diy": "yes", "procedure_ids": ["clean-pump-filter"],
+      "escalate_if_unfixed": true,
+      "technician_reason": "If E31 comes back after cleaning the pump filter, the pump needs replacing. Pump replacement is technician only.",
+      "escalation_source": {"manual_id": "kelvara-wm500", "page": 25}
+    },
+    {
+      "code": "dE", "meaning": "Door lock fault", "page": 22,
+      "causes": ["Door latch or lock assembly"],
+      "diy": "yes", "procedure_ids": ["close-door"],
+      "escalate_if_unfixed": true,
+      "technician_reason": "If the door still will not lock after closing it firmly, the lock assembly needs replacing. That is technician only.",
+      "escalation_source": {"manual_id": "kelvara-wm500", "page": 22}
+    }
+  ],
+  "procedures": [
+    {
+      "id": "clean-pump-filter", "title": "Clean the pump filter", "source": {"manual_id": "kelvara-wm500", "page": 24},
+      "minutes": 20, "tools": ["shallow tray", "towels"], "fixes": ["E21", "E31"],
+      "verify": "The washer should drain and spin with no error.",
+      "steps": [
+        {"id": "unplug", "text": "Turn off the washer and unplug it.", "source": {"manual_id": "kelvara-wm500", "page": 24}, "panel_labels": [], "gate": {"prompt": "Is the washer unplugged?"}},
+        {"id": "cool-down", "text": "If a hot wash just ran, wait 10 minutes. The water may be hot.", "source": {"manual_id": "kelvara-wm500", "page": 24}, "panel_labels": [], "gate": {"prompt": "Is the water cool to the touch?"}},
+        {"id": "open-panel", "text": "Open the small panel at the bottom front right.", "source": {"manual_id": "kelvara-wm500", "page": 24}, "panel_labels": ["Filter"]},
+        {"id": "drain-tube", "text": "Place the tray and towels under it. Pull out the small drain tube and let the water drain into the tray.", "source": {"manual_id": "kelvara-wm500", "page": 24}, "panel_labels": []},
+        {"id": "remove-filter", "text": "Twist the pump filter left and pull it out slowly.", "source": {"manual_id": "kelvara-wm500", "page": 24}, "panel_labels": []},
+        {"id": "clear-filter", "text": "Remove any lint, coins or hair, and rinse the filter.", "source": {"manual_id": "kelvara-wm500", "page": 24}, "panel_labels": []},
+        {"id": "refit-filter", "text": "Twist the filter back in until it is tight, then close the tube and the panel.", "source": {"manual_id": "kelvara-wm500", "page": 24}, "panel_labels": []},
+        {"id": "test-run", "text": "Plug the washer in and run the Drain & Spin cycle.", "source": {"manual_id": "kelvara-wm500", "page": 24}, "panel_labels": ["Drain & Spin"]}
+      ]
+    },
+    {
+      "id": "close-door", "title": "Close the door firmly", "source": {"manual_id": "kelvara-wm500", "page": 22},
+      "minutes": 2, "tools": [], "fixes": ["dE"],
+      "verify": "The panel should show the lock icon and the error should be gone.",
+      "steps": [
+        {"id": "close", "text": "Open the door, check nothing is caught in the rim, and close it firmly until it clicks.", "source": {"manual_id": "kelvara-wm500", "page": 22}, "panel_labels": []}
+      ]
+    }
+  ],
+  "parts": [
+    {"sku": "KV-WM5-PFLT", "name": "WM-500 pump filter", "price_usd": 11.25, "fits": ["E21", "E31"]}
+  ]
+}

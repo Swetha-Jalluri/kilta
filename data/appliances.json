@@ -1,0 +1,36 @@
+{
+  "appliances": [
+    {
+      "id": "dishwasher",
+      "manual_id": "kelvara-dw300",
+      "type": "dishwasher",
+      "name": "Kelvara DW-300 dishwasher",
+      "brand": "Kelvara",
+      "model": "DW-300",
+      "model_code": "DW-300-K7S2",
+      "room": "kitchen",
+      "purchase_date": "2024-03-12",
+      "past_repairs": [
+        {
+          "date": "2025-11-02",
+          "error_code": "E24",
+          "fix": "Cleaned the filter",
+          "outcome": "fixed",
+          "source": {"manual_id": "kelvara-dw300", "page": 18}
+        }
+      ]
+    },
+    {
+      "id": "washer",
+      "manual_id": "kelvara-wm500",
+      "type": "washer",
+      "name": "Kelvara WM-500 washer",
+      "brand": "Kelvara",
+      "model": "WM-500",
+      "model_code": "WM-500-R4T9",
+      "room": "laundry closet",
+      "purchase_date": "2023-08-30",
+      "past_repairs": []
+    }
+  ]
+}

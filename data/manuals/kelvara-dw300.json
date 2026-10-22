@@ -1,0 +1,66 @@
+{
+  "id": "kelvara-dw300",
+  "title": "Kelvara DW-300 dishwasher manual (fictional)",
+  "brand": "Kelvara",
+  "model": "DW-300",
+  "appliance_type": "dishwasher",
+  "model_sticker": {"location": "Along the right edge of the inner door, visible when the door is open.", "page": 4},
+  "model_code_format": "DW-300 followed by a 4-character variant, for example DW-300-K7S2.",
+  "quick_checks": [
+    {"id": "door-latched", "text": "Is the door fully latched? Press it until it clicks.", "panel_labels": [], "source": {"manual_id": "kelvara-dw300", "page": 16}},
+    {"id": "delay-start-off", "text": "Is Delay Start off? There should be no clock icon on the display.", "panel_labels": [], "source": {"manual_id": "kelvara-dw300", "page": 16}},
+    {"id": "child-lock-off", "text": "Is Child Lock off? Hold the Lock button for 3 seconds to switch it off.", "panel_labels": ["Lock"], "source": {"manual_id": "kelvara-dw300", "page": 16}},
+    {"id": "power-water-on", "text": "Are the power and the water supply both on?", "panel_labels": [], "source": {"manual_id": "kelvara-dw300", "page": 16}}
+  ],
+  "error_codes": [
+    {
+      "code": "E24", "meaning": "Water is not draining", "page": 18,
+      "causes": ["Clogged filter (the most common cause)", "Kinked drain hose", "Disposal knockout plug not removed (new installs)"],
+      "diy": "yes", "procedure_ids": ["clean-filter", "check-drain-hose"]
+    },
+    {
+      "code": "E15", "meaning": "Water detected in the base (leak)", "page": 19,
+      "causes": ["Leak inside the base pan"],
+      "diy": "technician_only", "technician_reason": "A leak in the base pan is technician only. Do not tilt the dishwasher or open the base.",
+      "procedure_ids": []
+    },
+    {
+      "code": "E09", "meaning": "Heater fault", "page": 19,
+      "causes": ["Internal heating element"],
+      "diy": "technician_only", "technician_reason": "A heater fault is internal electrical work, so it is technician only.",
+      "procedure_ids": []
+    }
+  ],
+  "procedures": [
+    {
+      "id": "clean-filter", "title": "Clean the filter", "source": {"manual_id": "kelvara-dw300", "page": 18},
+      "minutes": 15, "tools": ["towel", "soft brush", "small bowl"], "fixes": ["E24"],
+      "verify": "Water should drain and E24 should be gone.",
+      "steps": [
+        {"id": "unplug", "text": "Turn off the dishwasher and unplug it.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": [], "gate": {"prompt": "Is the dishwasher unplugged?"}},
+        {"id": "towel", "text": "Lay a towel in front of the door to catch water.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
+        {"id": "rack", "text": "Pull out the bottom rack.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
+        {"id": "remove-filter", "text": "Twist the round filter left, counterclockwise, and lift it out.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
+        {"id": "rinse-filter", "text": "Rinse the filter under warm water and scrub it gently with a soft brush.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
+        {"id": "check-sump", "text": "Check the sump opening for debris and remove it by hand.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": [], "gate": {"prompt": "Is the power still off?"}},
+        {"id": "refit-filter", "text": "Put the filter back and twist it right until it locks.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
+        {"id": "test-run", "text": "Slide the rack back, plug the dishwasher in, and run the Rinse cycle.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": ["Rinse"]}
+      ]
+    },
+    {
+      "id": "check-drain-hose", "title": "Check the drain hose", "source": {"manual_id": "kelvara-dw300", "page": 18},
+      "minutes": 10, "tools": [], "fixes": ["E24"],
+      "verify": "Water should drain and E24 should be gone.",
+      "steps": [
+        {"id": "unplug", "text": "Unplug the dishwasher.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": [], "gate": {"prompt": "Is the dishwasher unplugged?"}},
+        {"id": "open-cabinet", "text": "Open the cabinet under the sink.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
+        {"id": "straighten-hose", "text": "Find the grey drain hose and straighten any kinks or bends.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
+        {"id": "test-run", "text": "Plug the dishwasher in and run the Rinse cycle.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": ["Rinse"]}
+      ]
+    }
+  ],
+  "parts": [
+    {"sku": "KV-DW3-FLT", "name": "DW-300 replacement filter", "price_usd": 14.99, "fits": ["E24"]},
+    {"sku": "KV-DW3-HOSE", "name": "DW-300 drain hose, 6 ft", "price_usd": 19.50, "fits": ["E24"]}
+  ]
+}

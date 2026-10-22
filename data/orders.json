@@ -1,0 +1,10 @@
+{
+  "simulated": true,
+  "note": "Fictional order history for the Kilta demo. Not connected to any real store.",
+  "orders": [
+    {"order_id": "FIC-1001-0312", "date": "2024-03-12", "item": "Kelvara DW-300 dishwasher", "category": "appliance", "appliance_id": "dishwasher"},
+    {"order_id": "FIC-1001-0830", "date": "2023-08-30", "item": "Kelvara WM-500 front-load washer", "category": "appliance", "appliance_id": "washer"},
+    {"order_id": "FIC-1002-0415", "date": "2025-04-15", "item": "Dish sponges, 12 pack", "category": "household"},
+    {"order_id": "FIC-1003-0920", "date": "2025-09-20", "item": "Laundry detergent pods", "category": "household"}
+  ]
+}
