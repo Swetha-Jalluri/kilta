@@ -37,3 +37,4 @@ docs/fictional-manuals.md, docs/phases.md
 - Painful moment (docs gap, confusing error, workaround)? Run `/friction`.
 - Used a tool/SDK/API in a new way? Run `/feedback`.
 - When compacting, preserve: current phase, files changed, failing tests, run commands, open decisions.
+- Git: never add Claude as co-author or contributor. No Co-Authored-By, Claude-Session, or 'Generated with Claude Code' lines in commits or PRs.
