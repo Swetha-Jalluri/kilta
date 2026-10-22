@@ -1,0 +1,263 @@
+import asyncio
+
+import httpx
+import pytest
+from strands.types.exceptions import ModelThrottledException
+
+from kilta_bridge.chain import (
+    AllModelsFailed,
+    FallbackModel,
+    Link,
+    build_chain,
+    is_retryable,
+)
+from kilta_bridge.config import Settings
+
+from .fakes import (
+    BrokenMidStream,
+    FailingModel,
+    FailsAfterMessageStart,
+    FlakyModel,
+    Plan,
+    ScriptedModel,
+    SlowModel,
+)
+
+MESSAGES = [{"role": "user", "content": [{"text": "hello"}]}]
+
+
+async def run(chain: FallbackModel) -> list[dict]:
+    return [event async for event in chain.stream(MESSAGES)]
+
+
+def ok_model() -> ScriptedModel:
+    return ScriptedModel([Plan(say="fine")])
+
+
+class Sleeps:
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    async def __call__(self, delay: float) -> None:
+        self.delays.append(delay)
+
+
+async def test_a_429_is_retried_with_backoff_on_the_same_model():
+    sleeps = Sleeps()
+    flaky = FlakyModel(ok_model(), failures=2, error=ModelThrottledException("429 slow down"))
+    chain = FallbackModel(
+        [Link("primary", flaky), Link("backup", ok_model())],
+        sleep=sleeps,
+        base_delay=1.0,
+        retries=2,
+    )
+    await run(chain)
+    assert chain.last_used == "primary" and flaky.calls == 3
+    assert sleeps.delays == [1.0, 2.0]  # exponential backoff
+
+
+async def test_a_timeout_that_never_recovers_falls_back_after_the_retries():
+    sleeps = Sleeps()
+    failing = FailingModel(TimeoutError("timed out"))
+    events = []
+    chain = FallbackModel(
+        [Link("primary", failing), Link("backup", ok_model())],
+        sleep=sleeps,
+        retries=2,
+        base_delay=0.5,
+        on_event=events.append,
+    )
+    await run(chain)
+    assert chain.last_used == "backup" and failing.calls == 3
+    assert sleeps.delays == [0.5, 1.0]
+    assert [e["type"] for e in events] == ["model_retry", "model_retry", "model_fallback"]
+    assert events[-1]["next"] == "backup"
+
+
+async def test_a_non_retryable_error_skips_straight_to_the_next_model():
+    sleeps = Sleeps()
+    bad_key = FailingModel(ValueError("API key not valid"))
+    chain = FallbackModel([Link("primary", bad_key), Link("backup", ok_model())], sleep=sleeps)
+    await run(chain)
+    assert chain.last_used == "backup" and bad_key.calls == 1 and sleeps.delays == []
+    assert chain.attempts[0]["retryable"] is False
+
+
+async def test_the_chain_walks_every_link_in_order():
+    errors = [ValueError("bad key"), TimeoutError("timed out"), RuntimeError("503 UNAVAILABLE")]
+    links = [Link(f"m{i}", FailingModel(e)) for i, e in enumerate(errors)]
+    links.append(Link("last", ok_model()))
+    chain = FallbackModel(links, retries=0, sleep=Sleeps())
+    await run(chain)
+    assert [a["model"] for a in chain.attempts] == ["m0", "m1", "m2"]
+    assert chain.last_used == "last"
+
+
+async def test_when_every_model_fails_it_says_so():
+    chain = FallbackModel(
+        [Link("a", FailingModel(ValueError("x"))), Link("b", FailingModel(ValueError("y")))],
+        retries=0,
+        sleep=Sleeps(),
+    )
+    with pytest.raises(AllModelsFailed) as raised:
+        await run(chain)
+    assert [a["model"] for a in raised.value.attempts] == ["a", "b"]
+
+
+async def test_a_model_that_never_answers_times_out_into_the_fallback():
+    chain = FallbackModel(
+        [Link("slow", SlowModel()), Link("backup", ok_model())],
+        retries=0,
+        first_token_timeout=0.05,
+        sleep=Sleeps(),
+    )
+    await run(chain)
+    assert chain.last_used == "backup"
+    assert "FirstTokenTimeout" in chain.attempts[0]["error"]
+
+
+async def test_a_failure_after_streaming_started_is_not_hidden():
+    chain = FallbackModel(
+        [Link("broken", BrokenMidStream()), Link("backup", ok_model())], retries=0, sleep=Sleeps()
+    )
+    with pytest.raises(RuntimeError, match="mid-stream"):
+        await run(chain)
+
+
+async def test_pacing_spaces_out_calls_to_one_model():
+    link = Link("paced", ok_model(), min_interval=0.15)
+    chain = FallbackModel([link], retries=0)
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    await run(chain)
+    await run(chain)
+    assert loop.time() - start >= 0.14
+
+
+class WithStatus(Exception):
+    def __init__(self, status: int) -> None:
+        super().__init__("boom")
+        self.status_code = status
+
+
+@pytest.mark.parametrize(
+    "error, expected",
+    [
+        (ModelThrottledException("slow"), True),
+        (TimeoutError(), True),
+        (httpx.ReadTimeout("t"), True),
+        (httpx.ConnectError("c"), True),
+        (WithStatus(429), True),
+        (WithStatus(503), True),
+        (RuntimeError("503 UNAVAILABLE: high demand"), True),
+        (RuntimeError("RESOURCE_EXHAUSTED"), True),
+        (WithStatus(400), False),
+        (WithStatus(401), False),
+        (ValueError("API key not valid"), False),
+        (KeyError("model"), False),
+    ],
+)
+def test_which_errors_are_worth_retrying(error, expected):
+    assert is_retryable(error) is expected
+
+
+def test_the_real_chain_order_is_gemini_groq_flash_lite_ollama():
+    settings = Settings(gemini_api_key="g", groq_api_key="q")
+    names = [link.name for link in build_chain(settings).links]
+    assert names == [
+        "gemini:gemini-3.5-flash",
+        "groq:openai/gpt-oss-120b",
+        "gemini:gemini-3.5-flash-lite",
+        "ollama:qwen3:8b",
+    ]
+
+
+def test_links_without_credentials_are_left_out_but_ollama_stays_last():
+    assert [link.name for link in build_chain(Settings(groq_api_key="q")).links] == [
+        "groq:openai/gpt-oss-120b",
+        "ollama:qwen3:8b",
+    ]
+    assert [link.name for link in build_chain(Settings()).links] == ["ollama:qwen3:8b"]
+
+
+def test_model_ids_and_pacing_come_from_the_environment():
+    settings = Settings.from_env(
+        {
+            "GEMINI_API_KEY": "g",
+            "GROQ_API_KEY": "q",
+            "KILTA_MODEL_PRIMARY": "gemini-x",
+            "KILTA_MODEL_GROQ": "groq-y",
+            "KILTA_MODEL_FALLBACK": "gemini-z",
+            "KILTA_OLLAMA_MODEL": "llama",
+            "KILTA_MODEL_MIN_INTERVAL": "4.5",
+        }
+    )
+    chain = build_chain(settings)
+    assert [link.name for link in chain.links] == [
+        "gemini:gemini-x",
+        "groq:groq-y",
+        "gemini:gemini-z",
+        "ollama:llama",
+    ]
+    assert chain.links[0].min_interval == 4.5 and chain.links[-1].min_interval == 0.0
+
+
+async def test_a_failed_model_is_skipped_during_its_cooldown_then_tried_again():
+    now = [100.0]
+    failing = FailingModel(TimeoutError("timed out"))
+    events = []
+    chain = FallbackModel(
+        [Link("primary", failing), Link("backup", ok_model())],
+        retries=1,
+        cooldown=30,
+        clock=lambda: now[0],
+        sleep=Sleeps(),
+        on_event=events.append,
+    )
+    await run(chain)
+    assert failing.calls == 2  # one try, one retry, then the fallback
+    await run(chain)
+    assert failing.calls == 2  # still cooling down: skipped, no wasted retries
+    assert any(e["type"] == "model_skipped" and e["model"] == "primary" for e in events)
+    now[0] += 31
+    await run(chain)
+    assert failing.calls == 4  # the cooldown ended, so it gets another chance
+
+
+async def test_when_every_model_is_cooling_down_they_are_all_tried_anyway():
+    now = [0.0]
+    chain = FallbackModel(
+        [Link("a", FailingModel(ValueError("x"))), Link("b", FailingModel(ValueError("y")))],
+        retries=0,
+        cooldown=60,
+        clock=lambda: now[0],
+        sleep=Sleeps(),
+    )
+    with pytest.raises(AllModelsFailed):
+        await run(chain)
+    with pytest.raises(AllModelsFailed) as raised:
+        await run(chain)
+    assert [a["model"] for a in raised.value.attempts][-2:] == ["a", "b"]
+
+
+async def test_an_error_after_messagestart_but_before_content_still_falls_back():
+    """Gemini announces the message before the request succeeds; a bad key arrives after it."""
+    early = FailsAfterMessageStart(ValueError("400 API key not valid"))
+    chain = FallbackModel(
+        [Link("gemini", early), Link("groq", ok_model())], retries=2, sleep=Sleeps()
+    )
+    events = await run(chain)
+    assert chain.last_used == "groq" and early.calls == 1
+    assert sum("messageStart" in e for e in events) == 1  # the caller sees one clean message
+
+
+async def test_a_retryable_error_after_messagestart_is_retried():
+    sleeps = Sleeps()
+    flaky = FlakyModel(
+        FailsAfterMessageStart(RuntimeError("429 RESOURCE_EXHAUSTED")), 0, RuntimeError("unused")
+    )
+    chain = FallbackModel(
+        [Link("gemini", flaky), Link("groq", ok_model())], retries=1, base_delay=0.5, sleep=sleeps
+    )
+    await run(chain)
+    assert sleeps.delays == [0.5] and chain.last_used == "groq"
