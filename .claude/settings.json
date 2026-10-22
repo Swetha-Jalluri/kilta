@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv *)",
+      "Bash(make *)",
+      "Bash(npm run *)",
+      "Bash(npm install *)",
+      "Bash(npx playwright *)",
+      "Bash(npx @modelcontextprotocol/inspector *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git log *)",
+      "Bash(curl -s http://localhost*)",
+      "Bash(lsof -i *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Bash(git push --force *)"
+    ]
+  }
+}
