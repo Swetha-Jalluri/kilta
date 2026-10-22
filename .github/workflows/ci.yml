@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      UV_FROZEN: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Install server dependencies from uv.lock
+        run: uv sync --frozen
+        working-directory: server
+      - name: Lint, test, build
+        run: make check
