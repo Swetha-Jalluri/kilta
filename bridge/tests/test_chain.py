@@ -10,6 +10,7 @@ from kilta_bridge.chain import (
     Link,
     build_chain,
     is_retryable,
+    quota_delay,
 )
 from kilta_bridge.config import Settings
 
@@ -261,3 +262,57 @@ async def test_a_retryable_error_after_messagestart_is_retried():
     )
     await run(chain)
     assert sleeps.delays == [0.5] and chain.last_used == "groq"
+
+
+class SpentQuota(Exception):
+    """Looks like google.genai's ClientError for a spent free-tier daily quota."""
+
+    def __init__(self) -> None:
+        super().__init__("429 RESOURCE_EXHAUSTED")
+        self.details = {
+            "error": {
+                "message": "Quota exceeded for metric: generate_content_free_tier_requests, "
+                "limit: 20, model: gemini-3.6-flash\nPlease retry in 8h56m12.355977132s."
+            }
+        }
+
+
+def throttled_by_daily_quota() -> ModelThrottledException:
+    error = ModelThrottledException("You exceeded your current quota")
+    error.__cause__ = SpentQuota()
+    return error
+
+
+def test_quota_delay_is_read_from_the_error_chain():
+    assert quota_delay(throttled_by_daily_quota()) == pytest.approx(
+        8 * 3600 + 56 * 60 + 12.36, 0.01
+    )
+    assert quota_delay(ModelThrottledException("429 slow down")) is None
+    assert quota_delay(RuntimeError("retry in 2s")) is None  # short waits are ordinary retries
+    assert quota_delay(RuntimeError("retryDelay: '32254s'")) == 32254
+    assert quota_delay(RuntimeError("GenerateRequestsPerDayPerProjectPerModel-FreeTier")) == 3600
+
+
+async def test_a_spent_daily_quota_is_not_retried_and_the_model_is_skipped_for_hours():
+    now = [0.0]
+    sleeps = Sleeps()
+    spent = FailingModel(throttled_by_daily_quota())
+    events = []
+    chain = FallbackModel(
+        [Link("flash", spent), Link("lite", ok_model())],
+        retries=3,
+        cooldown=45,
+        clock=lambda: now[0],
+        sleep=sleeps,
+        on_event=events.append,
+    )
+    await run(chain)
+    assert spent.calls == 1 and sleeps.delays == []  # no pointless backoff
+    assert chain.attempts[0]["quota_resets_in_s"] > 32000
+    now[0] = 3600
+    await run(chain)
+    assert spent.calls == 1  # an hour later it is still skipped
+    assert any(e["type"] == "model_skipped" and e["for_s"] > 10000 for e in events)
+    now[0] = 6 * 3600 + 1
+    await run(chain)
+    assert spent.calls == 2  # the cap lets it be tried again, in case the quota changed

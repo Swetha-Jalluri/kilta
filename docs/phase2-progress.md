@@ -1,7 +1,7 @@
 # Phase 2 progress (bridge + Strands agent)
 
-Status: work in progress. `make check` passes (server 93 tests, bridge 48 tests, ruff clean).
-The live golden tests have not yet run green end to end.
+Status: work in progress. `make check` passes (server 93 tests, bridge 53 tests, ruff clean).
+Blocked on free-tier model quota: the live golden scenarios A, B, C have not run end to end.
 
 ## Done
 - `bridge/` uv project, committed `uv.lock`. Pins `mcp>=1.27,<2` (strands-agents 1.62 allows mcp 2.x, so
@@ -38,15 +38,31 @@ The live golden tests have not yet run green end to end.
   on the pinned models.
 - Strands still uses the deprecated `streamablehttp_client`.
 
+## Since the first note (2026-10-22)
+- `make dev` starts server :8765 and bridge :8000; `make test-live` (`ARGS='-k scenario_c'` picks one);
+  the bridge is in CI.
+- Host guard in the bridge: a turn may not both ask the user something (safety question, gate) and
+  answer it. Found live: gpt-oss on Groq answered the safety question itself ("No, there's no burning")
+  in the same turn it asked it. The bridge now cancels `safety_check(false)` and `confirm_gate(true)`
+  after a question or gate was presented in that turn; reporting danger is always allowed. The server
+  cannot enforce this because MCP has no notion of a user turn.
+- Chain: a spent daily quota ("Please retry in 8h56m") is not retried, and the model is skipped for up to
+  6 hours.
+- Live results so far (Gemini 3.5 Flash answering): the four danger answers all produced the right
+  `danger_reported` boolean (yes/sí -> true -> STOPPED; no/no huele a nada -> false -> carried on). The
+  bad-Gemini-key proof passed: Groq answered, the Gemini failure was recorded as non-retryable.
+
+## Blocking finding: the Gemini free tier is about 20 requests per day
+`gemini-3.5-flash` resolves to `gemini-3.6-flash`, whose free-tier limit is **20 requests per day per
+model** ("limit: 20 ... Please retry in 8h56m"). One Kilta turn makes 2 to 4 model calls, so one
+conversation exhausts it. Groq is capped at 8,000 tokens per minute (about one call a minute). Flash-Lite
+still answered at the last check; its daily limit is not published and not yet measured.
+
 ## Left
-1. Run the live tests and fix what they show: bad-key proof, danger answers, scenarios A, B, C. Keep them
-   paced (`KILTA_LIVE_PACE`, default 4 s). Paste the output as the "Done when" evidence.
-2. `make dev` should also start the bridge on :8000; add `make test-live`; add the bridge to CI
-   (`uv sync --frozen` in `bridge/`).
-3. Decide whether to shrink the per-call token load (compact tool schemas, shorter prompt) so Groq is
-   more than a rescue link.
-4. Your `.env` may still set `KILTA_MODEL_PRIMARY=gemini-flash-latest` (it overrides the new defaults);
-   update it to the IDs in `.env.example`.
-5. Reviewer subagent on the diff, fix correctness/safety findings, final commit.
-6. Log: `/friction` (uv sync before `src/` exists leaves the package uninstalled; `gemini-flash-latest`
-   overloaded; Groq 8k TPM) and `/feedback` (Strands, Gemini, Groq).
+1. Decide how to get unthrottled models (see the options in the Phase 2 report), then run the live
+   scenarios A, B, C and paste the output as the "Done when" evidence.
+2. Optional: shrink the per-call token load (tool schemas about 3,500 tokens, system prompt about 1,400).
+3. Your `.env` may still set `KILTA_MODEL_PRIMARY=gemini-flash-latest`; update it to the IDs in `.env.example`.
+4. Reviewer subagent on the Phase 2 diff, fix correctness/safety findings, final commit.
+5. Log `/friction` (Gemini 20 requests/day, Groq 8k TPM, `uv sync` before `src/` exists) and `/feedback`
+   (Strands, Gemini, Groq).

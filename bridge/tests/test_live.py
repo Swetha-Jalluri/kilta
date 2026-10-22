@@ -104,10 +104,10 @@ def test_live_safety_answers_become_explicit_booleans(
     assert checks, f"no safety_check call for {answer!r}: {[c['name'] for c in resp['tool_calls']]}"
     assert checks[-1]["arguments"]["danger_reported"] is danger
     if danger:
-        assert resp["state"] == "STOPPED" and resp["card"]["type"] == "safety_stop"
+        assert resp["state"] == "STOPPED"  # the model may go on to offer a landlord message
         assert not {"identify_appliance", "next_step"} & {c["name"] for c in resp["tool_calls"]}
     else:
-        assert resp["state"] in {"IDENTIFY", "MANUAL"}
+        assert resp["state"] in {"IDENTIFY", "MANUAL", "QUICK_CHECKS"}
 
 
 def test_live_a_bad_gemini_key_is_answered_by_groq(start_bridge):

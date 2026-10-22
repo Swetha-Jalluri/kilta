@@ -30,6 +30,15 @@ RETRYABLE_TEXT = re.compile(
     re.IGNORECASE,
 )
 
+# Gemini's free tier answers a spent daily quota with "Please retry in 8h56m12.35s". Retrying
+# that is pointless, so it is not retried and the model is skipped for that long (capped).
+RETRY_IN = re.compile(
+    r"retry in\s*(?:(\d+)h)?\s*(?:(\d+)m)?\s*(?:(\d+(?:\.\d+)?)s)?", re.IGNORECASE
+)
+RETRY_DELAY = re.compile(r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s")
+LONG_WAIT_S = 120.0  # a wait longer than this is not worth a retry
+MAX_SKIP_S = 6 * 3600.0
+
 EventSink = Callable[[dict[str, Any]], None]
 
 
@@ -46,7 +55,28 @@ class FirstTokenTimeout(TimeoutError):
     pass
 
 
+def quota_delay(error: BaseException) -> float | None:
+    """Seconds until a spent quota resets, if the error says it is a long wait (else None)."""
+    parts: list[str] = []
+    current: BaseException | None = error
+    while current is not None and len(parts) < 6:
+        parts.append(f"{current} {getattr(current, 'details', '')}")
+        current = current.__cause__
+    text = " ".join(parts)
+    delay = None
+    if match := RETRY_IN.search(text):
+        h, m, s = (float(g) if g else 0.0 for g in match.groups())
+        delay = h * 3600 + m * 60 + s or None
+    elif match := RETRY_DELAY.search(text):
+        delay = float(match.group(1))
+    if "PerDay" in text and delay is None:
+        delay = 3600.0
+    return delay if delay is not None and delay >= LONG_WAIT_S else None
+
+
 def is_retryable(error: BaseException) -> bool:
+    if quota_delay(error) is not None:
+        return False
     if isinstance(error, ModelThrottledException | TimeoutError | asyncio.TimeoutError):
         return True
     if isinstance(error, httpx.TimeoutException | httpx.ConnectError | ConnectionError):
@@ -154,12 +184,15 @@ class FallbackModel(Model):
                     if started:
                         raise
                     retry = is_retryable(error) and attempt < self.retries
+                    quota = quota_delay(error)
                     record = {
                         "model": link.name,
                         "attempt": attempt + 1,
                         "error": f"{type(error).__name__}: {str(error)[:160]}",
                         "retryable": is_retryable(error),
                     }
+                    if quota:
+                        record["quota_resets_in_s"] = int(quota)
                     self.attempts.append(record)
                     log.warning("model %s failed: %s", link.name, record["error"])
                     if retry:
@@ -168,7 +201,10 @@ class FallbackModel(Model):
                         await self._sleep(delay)
                         continue
                     nxt = candidates[index + 1].name if index + 1 < len(candidates) else None
-                    link.down_until = self._clock() + self.cooldown
+                    skip_for = (
+                        max(self.cooldown, min(quota, MAX_SKIP_S)) if quota else self.cooldown
+                    )
+                    link.down_until = self._clock() + skip_for
                     self.on_event({"type": "model_fallback", **record, "next": nxt})
                     break
         raise AllModelsFailed(self.attempts)
