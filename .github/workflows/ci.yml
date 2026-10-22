@@ -17,5 +17,8 @@ jobs:
       - name: Install server dependencies from uv.lock
         run: uv sync --frozen
         working-directory: server
+      - name: Install bridge dependencies from uv.lock
+        run: uv sync --frozen
+        working-directory: bridge
       - name: Lint, test, build
         run: make check

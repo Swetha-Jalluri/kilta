@@ -20,6 +20,11 @@ from .models import ToolCall, TurnRequest, TurnResponse
 
 log = logging.getLogger("kilta.agent")
 
+NOT_YET = (
+    "The user has not replied yet, so you cannot answer for them. End your turn by asking them "
+    "the question, and wait for their answer."
+)
+QUESTION_CARDS = {"safety_question", "safety_recheck"}
 BUSY_SPEECH = "Sorry, I lost my train of thought for a second. Could you say that again?"
 
 
@@ -52,6 +57,8 @@ class KiltaAgent:
         self._household: dict[str, Any] | None = None
         self._calls: list[ToolCall] = []
         self._started: dict[str, float] = {}
+        self._asked_this_turn = False  # a question or gate was put to the user in this turn
+        self._cancelled: set[str] = set()
         self.state: str | None = None
         self.session_id: str | None = None
         self.card: dict[str, Any] | None = None
@@ -97,8 +104,24 @@ class KiltaAgent:
     def _chain_event(self, event: dict[str, Any]) -> None:
         self.bus.publish(event)
 
+    @staticmethod
+    def _answers_for_the_user(name: str, args: dict[str, Any]) -> bool:
+        """A call that would clear a safety question or confirm a gate."""
+        if name == "safety_check":
+            return not args.get("danger_reported", False)
+        return name == "confirm_gate" and bool(args.get("confirmed", True))
+
     def _before_tool(self, event: BeforeToolCallEvent) -> None:
-        self._started[event.tool_use["toolUseId"]] = time.monotonic()
+        use = event.tool_use
+        self._started[use["toolUseId"]] = time.monotonic()
+        # Host policy: a turn may not both ask the user something and answer it. Models do
+        # this ("No, there's no burning") when the user's message already describes the problem.
+        # Reporting danger is always allowed.
+        if self._asked_this_turn and self._answers_for_the_user(
+            use["name"], use.get("input") or {}
+        ):
+            event.cancel_tool = NOT_YET
+            self._cancelled.add(use["toolUseId"])
 
     def _after_tool(self, event: AfterToolCallEvent) -> None:
         use = event.tool_use
@@ -106,7 +129,10 @@ class KiltaAgent:
         result = event.result or {}
         structured = result.get("structuredContent") or {}
         error = None
-        if event.exception is not None:
+        cancelled = use["toolUseId"] in self._cancelled
+        if cancelled:
+            error = "answered_for_user"
+        elif event.exception is not None:
             error = f"{type(event.exception).__name__}: {event.exception}"[:200]
         elif result.get("status") == "error":
             error = _text({"content": result.get("content", [])})[:200] or "tool error"
@@ -114,8 +140,8 @@ class KiltaAgent:
             name=use["name"],
             arguments=dict(use.get("input") or {}),
             ok=error is None,
-            refused=bool(structured.get("refused")),
-            reason=structured.get("reason"),
+            refused=cancelled or bool(structured.get("refused")),
+            reason="not_answered_by_user" if cancelled else structured.get("reason"),
             state=structured.get("state"),
             session_id=structured.get("session_id"),
             say=_text({"content": result.get("content", [])}) or None,
@@ -126,6 +152,9 @@ class KiltaAgent:
         card = structured.get("card")
         if isinstance(card, dict):
             self.card = card
+            gate = card.get("gate")
+            if card.get("type") in QUESTION_CARDS or (gate and not gate.get("confirmed")):
+                self._asked_this_turn = True
         if call.state:
             self.state = call.state
         if call.session_id:
@@ -163,6 +192,8 @@ class KiltaAgent:
         language = request.language or (member["language"] if member else "en")
         snapshot = list(self.agent.messages) if self.agent else []
         self._calls = []
+        self._asked_this_turn = False
+        self._cancelled.clear()
         self.chain.begin_turn()
         self.bus.publish(
             {

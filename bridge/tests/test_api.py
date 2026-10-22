@@ -86,7 +86,7 @@ def test_live_tool_calls_stream_over_sse(start_bridge):
         Plan(
             [
                 ("start_repair", {"description": "beeping"}),
-                ("safety_check", {"danger_reported": False}),
+                ("get_repair_state", {}),
             ],
             say="Okay.",
         )
@@ -106,9 +106,9 @@ def test_live_tool_calls_stream_over_sse(start_bridge):
     assert kinds == ["turn_start", "tool_call", "tool_call", "turn_end"]
     assert [e["name"] for e in events if e["type"] == "tool_call"] == [
         "start_repair",
-        "safety_check",
+        "get_repair_state",
     ]
-    assert events[-1]["state"] == "IDENTIFY" and events[1]["state"] == "SAFETY_CHECK"
+    assert events[-1]["state"] == "SAFETY_CHECK" and events[1]["state"] == "SAFETY_CHECK"
     assert [e["seq"] for e in events] == sorted(e["seq"] for e in events)
 
 
@@ -245,3 +245,61 @@ def test_when_every_model_fails_the_turn_still_answers_and_recovers(start_bridge
     second = bridge.turn("My dishwasher is beeping")
     assert second["error"] is None and second["state"] == "SAFETY_CHECK"
     assert failing.calls == 0
+
+
+# --- the model may not answer for the user -----------------------------------------------------
+
+
+def test_the_model_cannot_answer_the_safety_question_in_the_turn_it_asks_it(start_bridge):
+    plan = Plan(
+        [
+            ("start_repair", {"description": "beeping"}),
+            ("safety_check", {"danger_reported": False, "details": "No, there's no burning"}),
+            ("identify_appliance", {"appliance_type": "dishwasher"}),
+        ],
+        say="Is there any burning smell?",
+    )
+    bridge = start_bridge([Link("scripted", scripted(plan))])
+    resp = bridge.turn("My dishwasher is beeping")
+    calls = {c["name"]: c for c in resp["tool_calls"]}
+    assert calls["safety_check"]["ok"] is False
+    assert calls["safety_check"]["reason"] == "not_answered_by_user"
+    assert resp["state"] == "SAFETY_CHECK"  # still waiting for the user
+    assert calls["identify_appliance"]["refused"] is True  # the engine refused the skip too
+
+
+def test_reporting_danger_is_allowed_in_the_same_turn_as_the_question(start_bridge):
+    plan = Plan(
+        [
+            ("start_repair", {"description": "I smell burning"}),
+            ("safety_check", {"danger_reported": True, "details": "I smell burning"}),
+        ]
+    )
+    resp = start_bridge([Link("scripted", scripted(plan))]).turn("I smell burning")
+    assert resp["state"] == "STOPPED" and resp["tool_calls"][1]["ok"] is True
+
+
+def test_a_gate_cannot_be_confirmed_in_the_turn_it_is_asked(start_bridge):
+    setup = [
+        Plan([("start_repair", {"description": "beeping"})]),
+        Plan(
+            [
+                ("safety_check", {"danger_reported": False}),
+                ("identify_appliance", {"appliance_type": "dishwasher"}),
+                ("find_manual", {}),
+                ("quick_checks", {}),
+            ]
+        ),
+        Plan([("diagnose", {"error_code": "E24"})]),
+        Plan([("next_step", {}), ("confirm_gate", {"confirmed": True})]),
+        Plan([("confirm_gate", {"confirmed": True}), ("next_step", {})]),
+    ]
+    bridge = start_bridge([Link("scripted", scripted(*setup))])
+    for text in ("beeping", "no", "it's shut, E24"):
+        bridge.turn(text)
+    asked = bridge.turn("ready")
+    assert asked["tool_calls"][1]["reason"] == "not_answered_by_user"
+    assert asked["state"] == "STEPS" and asked["card"]["gate"]["confirmed"] is False
+    answered = bridge.turn("it's unplugged")  # the user's own reply, in its own turn
+    assert [c["ok"] for c in answered["tool_calls"]] == [True, True]
+    assert answered["card"]["step_number"] == 2
