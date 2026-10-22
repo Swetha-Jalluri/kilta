@@ -99,6 +99,8 @@ class Engine:
         """Safety comes first, for every action except safety_check itself."""
         if s.state == State.STOPPED:
             return self._refuse(self._stopped(s), "stopped")
+        if s.state == State.SAFETY_RECHECK:
+            return self._refuse(self._recheck_question(s), "safety_recheck")
         if s.state == State.SAFETY_CHECK or not s.safety_cleared:
             return self._refuse(self._safety_question(s), "safety_first")
         if s.state in allowed:
@@ -120,6 +122,8 @@ class Engine:
         match s.state:
             case State.SAFETY_CHECK:
                 return self._safety_question(s)
+            case State.SAFETY_RECHECK:
+                return self._recheck_question(s)
             case State.STOPPED:
                 return self._stopped(s)
             case State.IDENTIFY:
@@ -153,6 +157,23 @@ class Engine:
     def _safety_question(self, s: Session) -> Outcome:
         q = self.store.safety["safety_question"]
         return self._out(s, q, {"type": "safety_question", "question": q})
+
+    def _recheck_question(self, s: Session) -> Outcome:
+        say = (
+            "You mentioned something that could be unsafe. Before anything else: is that "
+            "happening right now, burning, gas, smoke, sparks or a shock? Please answer yes or no."
+        )
+        return self._out(
+            s, say, {"type": "safety_recheck", "question": say, "heard": s.recheck_text}
+        )
+
+    def _enter_recheck(self, s: Session, text: str) -> Outcome:
+        """Danger words in free text pause the repair. Only an explicit safety_check(true)
+        stops it for good; an explicit false carries on where we were."""
+        s.recheck_from, s.recheck_text = s.state, text
+        s.state = State.SAFETY_RECHECK
+        self._save(s, "safety recheck requested")
+        return self._recheck_question(s)
 
     def _stopped(self, s: Session) -> Outcome:
         steps = self.store.safety["stop_instructions"]
@@ -242,21 +263,36 @@ class Engine:
         }
         return self._out(s, say, card)
 
-    def _pending_gate(self, s: Session) -> tuple[str, str] | None:
+    def _pending_gate(self, s: Session) -> tuple[str, str, str] | None:
+        """(key, prompt, kind) of the gate that must be confirmed before anything moves on.
+        Gates asked again after a resume come first: they belong to earlier steps."""
         proc = self._procedure(s)
         if not proc:
             return None
-        if s.step_index >= 0:
-            step = proc.steps[s.step_index]
-            key = _gate_key(proc, step.id)
-            if step.gate and key not in s.confirmed_gates:
-                return key, step.gate.prompt
         if s.reconfirm_gate:
             step_id = s.reconfirm_gate.split(":", 1)[1]
             step = next(st for st in proc.steps if st.id == step_id)
             assert step.gate
-            return s.reconfirm_gate, step.gate.prompt
+            return s.reconfirm_gate, step.gate.prompt, step.gate.kind
+        if s.step_index >= 0:
+            step = proc.steps[s.step_index]
+            key = _gate_key(proc, step.id)
+            if step.gate and key not in s.confirmed_gates:
+                return key, step.gate.prompt, step.gate.kind
         return None
+
+    def _text_withheld(self, s: Session) -> bool:
+        """True while the current step sits behind a "before" gate that is not yet confirmed."""
+        proc = self._procedure(s)
+        if not proc or s.step_index < 0:
+            return False
+        step = proc.steps[s.step_index]
+        gate = step.gate
+        return bool(
+            gate
+            and gate.kind == "before"
+            and (_gate_key(proc, step.id) not in s.confirmed_gates or s.reconfirm_gate)
+        )
 
     def _step(self, s: Session, *, blocked: bool = False, lead: str = "") -> Outcome:
         proc = self._procedure(s)
@@ -267,21 +303,29 @@ class Engine:
         if step.gate:
             gate = {
                 "prompt": step.gate.prompt,
+                "kind": step.gate.kind,
                 "confirmed": _gate_key(proc, step.id) in s.confirmed_gates,
             }
         if pending and (not step.gate or not gate or not gate["confirmed"]):
-            gate = {"prompt": pending[1], "confirmed": False}
+            gate = {"prompt": pending[1], "kind": pending[2], "confirmed": False}
         n, total = s.step_index + 1, len(proc.steps)
-        say = f"{lead}Step {n} of {total}. {step.text}"
-        if pending:
-            say += f" Before we go on: {pending[1]}"
+        # A "before" gate means the step text is not revealed until the user confirms.
+        withheld = self._text_withheld(s)
+        if withheld:
+            assert pending
+            say = f"{lead}Step {n} of {total}. Before I tell you this one: {pending[1]}"
+        else:
+            say = f"{lead}Step {n} of {total}. {step.text}"
+            if pending:
+                say += f" Before we go on: {pending[1]}"
         card = {
             "type": "step",
             "title": proc.title,
             "step_number": n,
             "step_total": total,
-            "text": step.text,
-            "panel_labels": step.panel_labels,
+            "text": None if withheld else step.text,
+            "text_withheld": withheld,
+            "panel_labels": [] if withheld else step.panel_labels,
             "gate": gate,
             "blocked": blocked,
             "source": step.source.model_dump(),
@@ -425,7 +469,7 @@ class Engine:
             )
         s = self.store.new_session(member_id.lower() if member_id else None, description)
         if self._danger_in(description):
-            return self._enter_stop(s, description)
+            return self._enter_recheck(s, description)
         return self._safety_question(s)
 
     def get_repair_state(self, session_id: str | None = None) -> Outcome:
@@ -438,8 +482,12 @@ class Engine:
         s, err = self._resolve(session_id)
         if err or not s:
             return err  # type: ignore[return-value]
-        if danger_reported or self._danger_in(details):
+        # The explicit answer is the only thing that stops or clears. Words in `details` are
+        # not scanned: "no, I don't smell any burning" must not count as danger.
+        if danger_reported:
             return self._enter_stop(s, details)
+        if s.state == State.SAFETY_RECHECK:
+            return self._leave_recheck(s, details)
         if s.state == State.SAFETY_CHECK:
             s.safety_cleared = True
             s.safety_notes = details
@@ -448,6 +496,20 @@ class Engine:
             say = "Good, thank you. " + self._ask_appliance(s).say
             return self._out(s, say, self._ask_appliance(s).card)
         return self.present(s)
+
+    def _leave_recheck(self, s: Session, details: str) -> Outcome:
+        previous = s.recheck_from or State.SAFETY_CHECK
+        s.recheck_from, s.recheck_text = None, ""
+        if previous == State.SAFETY_CHECK:
+            s.safety_cleared, s.safety_notes, s.state = True, details, State.IDENTIFY
+            self._save(s, "safety cleared after recheck")
+            return self._out(
+                s, "Good, thank you. " + self._ask_appliance(s).say, self._ask_appliance(s).card
+            )
+        s.state = previous
+        self._save(s, "safety recheck cleared")
+        out = self.present(s)
+        return out.model_copy(update={"say": "Okay, thank you. Let's carry on. " + out.say})
 
     # --- tools: identify, manual, quick checks, diagnose --------------------------------------
 
@@ -467,7 +529,12 @@ class Engine:
         if len(found) != 1:
             ask = self._ask_appliance(s)
             if model_code and not found:
-                ask = ask.model_copy(update={"say": "I couldn't match that model code. " + ask.say})
+                ask = ask.model_copy(
+                    update={
+                        "say": "I couldn't match that model code. I can also look through your "
+                        "order history, if you'd like. " + ask.say
+                    }
+                )
             return ask
         a = found[0]
         s.appliance_id, s.manual_id, s.state = a.id, a.manual_id, State.MANUAL
@@ -560,7 +627,7 @@ class Engine:
         if refusal := self._guard(s, {State.QUICK_CHECKS, State.DIAGNOSE}):
             return refusal
         if self._danger_in(note):
-            return self._enter_stop(s, note)
+            return self._enter_recheck(s, note)
         if setting_fixed is True:
             page = self._manual(s).quick_checks[0].source.page  # type: ignore[union-attr]
             return self._close_fixed(s, f"Quick check: {note or 'a setting was the cause'}", page)
@@ -588,7 +655,7 @@ class Engine:
         appliance = self._appliance(s)
         assert manual and appliance
         if self._danger_in(symptoms):
-            return self._enter_stop(s, symptoms)
+            return self._enter_recheck(s, symptoms)
         s.symptoms = symptoms or s.symptoms
         if reason := self._technician_topic(symptoms):
             s.error_code = error_code or s.error_code
@@ -742,7 +809,7 @@ class Engine:
         manual, proc = self._manual(s), self._procedure(s)
         assert manual and proc
         if self._danger_in(notes):
-            return self._enter_stop(s, notes)
+            return self._enter_recheck(s, notes)
         last = len(proc.steps) - 1
         if (
             fixed
@@ -888,6 +955,8 @@ class Engine:
     def _guard_handoff(self, s: Session) -> Outcome | None:
         if s.state in (State.HANDOFF, State.STOPPED):
             return None
+        if s.state == State.SAFETY_RECHECK:
+            return self._refuse(self._recheck_question(s), "safety_recheck")
         if s.state == State.SAFETY_CHECK:
             return self._refuse(self._safety_question(s), "safety_first")
         return self._refuse(self.present(s), "not_in_handoff", "We haven't handed this off yet. ")

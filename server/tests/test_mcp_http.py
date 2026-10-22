@@ -185,11 +185,46 @@ def test_danger_over_http_stops_the_repair(server_url):
         r = await s.call_tool(
             "start_repair", {"description": "I smell burning from the dishwasher"}
         )
-        assert r.structuredContent["state"] == "STOPPED"
-        assert r.structuredContent["card"]["type"] == "safety_stop"
+        assert r.structuredContent["state"] == "SAFETY_RECHECK"
+        assert r.structuredContent["card"]["type"] == "safety_recheck"
         sid = r.structuredContent["session_id"]
+        held = await s.call_tool("next_step", {"session_id": sid})
+        assert held.structuredContent["reason"] == "safety_recheck"
+        stopped = await s.call_tool("safety_check", {"session_id": sid, "danger_reported": True})
+        assert stopped.structuredContent["state"] == "STOPPED"
+        assert stopped.structuredContent["card"]["type"] == "safety_stop"
         again = await s.call_tool("next_step", {"session_id": sid})
         assert again.structuredContent["reason"] == "stopped"
+
+    with_session(server_url, run)
+
+
+def test_identify_appliance_points_the_agent_to_lookup_orders(server_url):
+    tools = {t.name: t for t in with_session(server_url, lambda s: s.list_tools()).tools}
+    description = tools["identify_appliance"].description
+    assert "lookup_orders" in description and "doesn't know the model" in description
+
+
+def test_before_gate_text_is_withheld_over_http(server_url):
+    async def run(s: ClientSession):
+        async def call(name, **args):
+            return (await s.call_tool(name, args)).structuredContent
+
+        sid = (await call("start_repair", member_id="priya", description="beeping"))["session_id"]
+        await call("safety_check", session_id=sid, danger_reported=False)
+        await call("identify_appliance", session_id=sid, appliance_type="dishwasher")
+        await call("find_manual", session_id=sid)
+        await call("quick_checks", session_id=sid)
+        await call("diagnose", session_id=sid, error_code="E24")
+        await call("next_step", session_id=sid)
+        await call("confirm_gate", session_id=sid, confirmed=True)
+        for _ in range(4):
+            await call("next_step", session_id=sid)
+        step6 = await call("next_step", session_id=sid)
+        assert step6["card"]["step_number"] == 6 and step6["card"]["text"] is None
+        assert "by hand" not in json.dumps(step6).lower()
+        revealed = await call("confirm_gate", session_id=sid, confirmed=True)
+        assert "sump" in revealed["card"]["text"].lower()
 
     with_session(server_url, run)
 

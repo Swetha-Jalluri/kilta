@@ -17,7 +17,15 @@ class Source(BaseModel):
 
 
 class Gate(BaseModel):
+    """A safety confirmation on a step.
+
+    "after": the step is told first, then the user confirms before moving on (unplug it, then
+    confirm it is unplugged). "before": the user confirms first, and the step text is withheld
+    until they do (is the power off? only then reveal "reach into the sump").
+    """
+
     prompt: str = Field(min_length=1)
+    kind: Literal["before", "after"] = "after"
 
 
 class Step(BaseModel):
@@ -184,6 +192,7 @@ class Household(BaseModel):
 
 class State(StrEnum):
     SAFETY_CHECK = "SAFETY_CHECK"
+    SAFETY_RECHECK = "SAFETY_RECHECK"
     STOPPED = "STOPPED"
     IDENTIFY = "IDENTIFY"
     MANUAL = "MANUAL"
@@ -218,6 +227,9 @@ class Session(BaseModel):
 
     safety_cleared: bool = False
     safety_notes: str = ""
+    # Danger words in free text pause the repair here until safety_check answers explicitly.
+    recheck_from: State | None = None
+    recheck_text: str = ""
 
     appliance_id: str | None = None
     manual_id: str | None = None

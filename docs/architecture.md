@@ -179,6 +179,9 @@ stateDiagram-v2
   [*] --> SAFETY_CHECK
   SAFETY_CHECK --> STOPPED: danger reported
   SAFETY_CHECK --> IDENTIFY: all clear
+  SAFETY_CHECK --> SAFETY_RECHECK: danger words in free text
+  SAFETY_RECHECK --> STOPPED: explicit danger answer
+  SAFETY_RECHECK --> IDENTIFY: explicit all clear (mid-repair: back to where it was)
   IDENTIFY --> MANUAL
   MANUAL --> QUICK_CHECKS
   QUICK_CHECKS --> FIXED: setting was the cause
@@ -200,7 +203,8 @@ stateDiagram-v2
 | Rule | Enforced where |
 |---|---|
 | No repair step before the safety check passes | Engine refuses and returns the safety step |
-| A gated step can’t advance until its gate is confirmed | `next_step` refuses until `confirm_gate` |
+| A gated step can’t advance until its gate is confirmed. An `after` gate (unplug it, then confirm) tells the step first; a `before` gate (is the power off?) withholds the step text until confirmed | `next_step` refuses until `confirm_gate`; the step card carries `text: null` while a `before` gate is open |
+| Danger words in free text pause the repair in `SAFETY_RECHECK`; only an explicit `safety_check(danger_reported=true)` stops it, and `false` carries on | Engine, never keyword-only |
 | Gas, refrigerant, internal wiring, and “technician only” steps are never guided | Refusal list in data, engine routes to handoff |
 | Every step names its manual source | Steps without a reference fail validation |
 | Sessions persist and resume | Saved to JSON after every change |

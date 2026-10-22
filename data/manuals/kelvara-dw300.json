@@ -37,12 +37,12 @@
       "minutes": 15, "tools": ["towel", "soft brush", "small bowl"], "fixes": ["E24"],
       "verify": "Water should drain and E24 should be gone.",
       "steps": [
-        {"id": "unplug", "text": "Turn off the dishwasher and unplug it.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": [], "gate": {"prompt": "Is the dishwasher unplugged?"}},
+        {"id": "unplug", "text": "Turn off the dishwasher and unplug it.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": [], "gate": {"prompt": "Is the dishwasher unplugged?", "kind": "after"}},
         {"id": "towel", "text": "Lay a towel in front of the door to catch water.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
         {"id": "rack", "text": "Pull out the bottom rack.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
         {"id": "remove-filter", "text": "Twist the round filter left, counterclockwise, and lift it out.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
         {"id": "rinse-filter", "text": "Rinse the filter under warm water and scrub it gently with a soft brush.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
-        {"id": "check-sump", "text": "Check the sump opening for debris and remove it by hand.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": [], "gate": {"prompt": "Is the power still off?"}},
+        {"id": "check-sump", "text": "Check the sump opening for debris and remove it by hand.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": [], "gate": {"prompt": "Is the power still off?", "kind": "before"}},
         {"id": "refit-filter", "text": "Put the filter back and twist it right until it locks.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
         {"id": "test-run", "text": "Slide the rack back, plug the dishwasher in, and run the Rinse cycle.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": ["Rinse"]}
       ]
@@ -52,7 +52,7 @@
       "minutes": 10, "tools": [], "fixes": ["E24"],
       "verify": "Water should drain and E24 should be gone.",
       "steps": [
-        {"id": "unplug", "text": "Unplug the dishwasher.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": [], "gate": {"prompt": "Is the dishwasher unplugged?"}},
+        {"id": "unplug", "text": "Unplug the dishwasher.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": [], "gate": {"prompt": "Is the dishwasher unplugged?", "kind": "after"}},
         {"id": "open-cabinet", "text": "Open the cabinet under the sink.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
         {"id": "straighten-hose", "text": "Find the grey drain hose and straighten any kinks or bends.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": []},
         {"id": "test-run", "text": "Plug the dishwasher in and run the Rinse cycle.", "source": {"manual_id": "kelvara-dw300", "page": 18}, "panel_labels": ["Rinse"]}

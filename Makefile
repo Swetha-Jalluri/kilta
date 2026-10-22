@@ -1,5 +1,7 @@
 .PHONY: dev test reset check
 
+DATA_DIR ?= data
+
 # Server only for now; bridge and web are added in their phases.
 dev:
 	cd server && uv run kilta-server
@@ -11,7 +13,7 @@ test:
 
 # Back to the pristine demo: drop runtime sessions and repair history.
 reset:
-	rm -rf data/sessions data/state
+	rm -rf $(DATA_DIR)/sessions $(DATA_DIR)/state
 	@echo "Demo data restored."
 
 check:

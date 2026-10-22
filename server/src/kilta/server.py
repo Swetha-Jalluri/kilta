@@ -119,7 +119,9 @@ def create_server(
         ] = None,
     ) -> CallToolResult:
         """Work out which appliance is broken, from its id, a spoken model code or its type. Only
-        works after the safety check is clear. If it is ambiguous it asks which one."""
+        works after the safety check is clear. If it is ambiguous it asks which one. If the user
+        doesn't know the model or which appliance it is, offer to check their order history with
+        lookup_orders (ask permission first), then call this again with the appliance_id."""
         return as_result(
             engine.identify_appliance(session_id, appliance_id, model_code, appliance_type)
         )
@@ -171,7 +173,8 @@ def create_server(
         ] = "",
     ) -> CallToolResult:
         """Start a new repair session and get the safety question to ask first. If the description
-        mentions burning, smoke, sparks, gas or shock, the repair is stopped straight away."""
+        mentions burning, smoke, sparks, gas or shock, the repair pauses in a safety recheck until
+        safety_check gets an explicit answer."""
         return as_result(engine.start_repair(member_id, description))
 
     @mcp.tool(annotations=WRITES_IDEMPOTENT)
@@ -186,9 +189,10 @@ def create_server(
         session_id: SessionId = None,
         details: Annotated[str, Field(description="What the user said, in their words.")] = "",
     ) -> CallToolResult:
-        """Record the answer to the safety question. Danger stops the repair and returns stop
-        instructions; all clear unlocks the next step. Can be called again at any point if danger
-        appears mid-repair."""
+        """Record the user's explicit answer to the safety question. danger_reported=true stops the
+        repair and returns stop instructions; false unlocks the next step, or resumes after a
+        safety recheck. Only the answer counts, so "no, I don't smell burning" is false. Can be
+        called again at any point if danger appears mid-repair."""
         return as_result(engine.safety_check(session_id, danger_reported, details))
 
     @mcp.tool(annotations=READ_ONLY)
