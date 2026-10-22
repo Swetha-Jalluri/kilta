@@ -73,7 +73,8 @@ class Engine:
         self.store.save_session(s)
 
     def _resolve(self, session_id: str | None) -> tuple[Session | None, Outcome | None]:
-        s = self.store.load_session(session_id) if session_id else self.store.active_session()
+        # No id means the newest session, even a finished one, so a safety stop is never skipped.
+        s = self.store.load_session(session_id) if session_id else self.store.latest_session()
         if s:
             return s, None
         return None, self._out(
@@ -460,7 +461,7 @@ class Engine:
         s, err = self._resolve(session_id)
         if err or not s:
             return err  # type: ignore[return-value]
-        if refusal := self._guard(s, {State.IDENTIFY}):
+        if refusal := self._guard(s, {State.IDENTIFY, State.MANUAL}):
             return refusal
         found = self._match_appliances(appliance_id, model_code, appliance_type)
         if len(found) != 1:
@@ -558,6 +559,8 @@ class Engine:
             return err  # type: ignore[return-value]
         if refusal := self._guard(s, {State.QUICK_CHECKS, State.DIAGNOSE}):
             return refusal
+        if self._danger_in(note):
+            return self._enter_stop(s, note)
         if setting_fixed is True:
             page = self._manual(s).quick_checks[0].source.page  # type: ignore[union-attr]
             return self._close_fixed(s, f"Quick check: {note or 'a setting was the cause'}", page)
@@ -584,6 +587,8 @@ class Engine:
         manual = self._manual(s)
         appliance = self._appliance(s)
         assert manual and appliance
+        if self._danger_in(symptoms):
+            return self._enter_stop(s, symptoms)
         s.symptoms = symptoms or s.symptoms
         if reason := self._technician_topic(symptoms):
             s.error_code = error_code or s.error_code
@@ -736,6 +741,8 @@ class Engine:
             return refusal
         manual, proc = self._manual(s), self._procedure(s)
         assert manual and proc
+        if self._danger_in(notes):
+            return self._enter_stop(s, notes)
         last = len(proc.steps) - 1
         if (
             fixed
@@ -923,10 +930,4 @@ class Engine:
         )
 
     def _resolve_any(self, session_id: str | None) -> tuple[Session | None, Outcome | None]:
-        """Like _resolve, but also finds the most recent finished session."""
-        if session_id:
-            return self._resolve(session_id)
-        s = self.store.latest_session()
-        if s:
-            return s, None
-        return self._resolve(None)
+        return self._resolve(session_id)

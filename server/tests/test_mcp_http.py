@@ -125,7 +125,7 @@ def test_every_tool_returns_content_and_structured_content(server_url):
             "quick_checks": {"session_id": sid},
             "diagnose": {"session_id": sid, "error_code": "E24"},
             "next_step": {"session_id": sid},
-            "confirm_gate": {"session_id": sid},
+            "confirm_gate": {"session_id": sid, "confirmed": True},
             "pause_repair": {"session_id": sid},
             "go_back": {"session_id": sid},
             "report_result": {"session_id": sid, "outcome": "fixed"},
@@ -173,7 +173,7 @@ def test_scenario_a_over_http_enforces_the_gate(server_url):
         assert step["state"] == "STEPS" and step["card"]["gate"]["confirmed"] is False
         blocked = await call("next_step", session_id=sid)
         assert blocked["refused"] and blocked["reason"] == "gate_unconfirmed"
-        await call("confirm_gate", session_id=sid)
+        await call("confirm_gate", session_id=sid, confirmed=True)
         step2 = await call("next_step", session_id=sid)
         assert step2["card"]["step_number"] == 2 and not step2["refused"]
 
@@ -194,6 +194,22 @@ def test_danger_over_http_stops_the_repair(server_url):
     with_session(server_url, run)
 
 
+def test_safety_tools_have_no_fail_open_defaults(server_url):
+    async def run(s: ClientSession):
+        tools = {t.name: t for t in (await s.list_tools()).tools}
+        assert "danger_reported" in tools["safety_check"].inputSchema["required"]
+        assert "confirmed" in tools["confirm_gate"].inputSchema["required"]
+        sid = (await s.call_tool("start_repair", {"description": "beeping"})).structuredContent[
+            "session_id"
+        ]
+        bare = await s.call_tool("safety_check", {"session_id": sid})
+        assert bare.isError is True
+        state = await s.call_tool("get_repair_state", {"session_id": sid})
+        assert state.structuredContent["state"] == "SAFETY_CHECK"
+
+    with_session(server_url, run)
+
+
 def test_manual_resource_and_prompt_are_available(server_url):
     async def run(s: ClientSession):
         templates = (await s.list_resource_templates()).resourceTemplates
@@ -201,6 +217,8 @@ def test_manual_resource_and_prompt_are_available(server_url):
         res = await s.read_resource("kilta://manuals/kelvara-dw300")
         manual = json.loads(res.contents[0].text)
         assert manual["id"] == "kelvara-dw300"
+        assert "Turn off the dishwasher" not in res.contents[0].text  # no step text
+        assert "unplug" not in res.contents[0].text.lower()
         prompts = (await s.list_prompts()).prompts
         assert [p.name for p in prompts] == ["start-repair"]
 

@@ -176,14 +176,14 @@ def create_server(
 
     @mcp.tool(annotations=WRITES_IDEMPOTENT)
     def safety_check(
-        session_id: SessionId = None,
         danger_reported: Annotated[
             bool,
             Field(
-                description="True if the user reports burning, gas, smoke, sparks, "
-                "shock or similar."
+                description="Required, no default. True if the user reports burning, gas, "
+                "smoke, sparks, shock or similar; False only if they said none of those."
             ),
-        ] = False,
+        ],
+        session_id: SessionId = None,
         details: Annotated[str, Field(description="What the user said, in their words.")] = "",
     ) -> CallToolResult:
         """Record the answer to the safety question. Danger stops the repair and returns stop
@@ -245,11 +245,14 @@ def create_server(
 
     @mcp.tool(annotations=WRITES_IDEMPOTENT)
     def confirm_gate(
-        session_id: SessionId = None,
         confirmed: Annotated[
             bool,
-            Field(description="True only if the user clearly said the safety condition is met."),
-        ] = True,
+            Field(
+                description="Required, no default. True only if the user clearly said the "
+                "safety condition is met."
+            ),
+        ],
+        session_id: SessionId = None,
     ) -> CallToolResult:
         """Record that the user confirmed a safety gate, such as 'the dishwasher is unplugged'.
         Never confirm on the user's behalf."""
@@ -349,11 +352,18 @@ def create_server(
 
     @mcp.resource("kilta://manuals/{manual_id}", mime_type="application/json")
     def manual_resource(manual_id: str) -> str:
-        """A fictional Kelvara manual as readable JSON, with page references."""
+        """A fictional Kelvara manual as readable JSON: sticker, quick checks and error codes with
+        page references. Step-by-step procedures are left out; they only come through the repair
+        flow, after the safety check."""
         manual = store.manuals.get(manual_id)
         if manual is None:
             raise ValueError(f"unknown manual: {manual_id}")
-        return json.dumps(manual.model_dump(mode="json"), indent=2)
+        public = manual.model_dump(mode="json", exclude={"procedures", "parts"})
+        public["procedures"] = [
+            {"id": p.id, "title": p.title, "page": p.source.page, "minutes": p.minutes}
+            for p in manual.procedures
+        ]
+        return json.dumps(public, indent=2)
 
     @mcp.prompt(name="start-repair")
     def start_repair_prompt(appliance: str = "appliance", problem: str = "") -> str:

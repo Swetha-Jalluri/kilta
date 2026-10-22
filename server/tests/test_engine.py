@@ -439,3 +439,44 @@ def test_search_manual_gives_pages_but_never_steps(engine):
 def test_unknown_session_and_member_are_handled(engine):
     assert engine.get_repair_state("r-nope").reason == "no_session"
     assert engine.start_repair("nobody", "x").reason == "unknown_member"
+
+
+# --- review fixes ---------------------------------------------------------------------------
+
+
+def test_a_safety_stop_is_sticky_for_calls_without_a_session_id(engine):
+    older, _ = to_prepare(engine)
+    engine.next_step(older)
+    assert engine.start_repair("priya", "I smell gas and smoke").session.state == State.STOPPED
+    out = engine.next_step()  # no session id: must hit the newest session, the stopped one
+    assert out.refused and out.reason == "stopped"
+    assert engine.store.load_session(older).state == State.STEPS
+
+
+def test_danger_words_in_diagnose_symptoms_stop_the_repair(engine):
+    sid = to_quick_checks(engine)
+    out = engine.diagnose(sid, error_code="E24", symptoms="it is sparking and smells burnt")
+    assert out.session.state == State.STOPPED
+
+
+def test_danger_words_in_quick_check_note_stop_the_repair(engine):
+    sid = to_quick_checks(engine)
+    out = engine.quick_checks(sid, setting_fixed=False, note="there was a spark")
+    assert out.session.state == State.STOPPED
+
+
+def test_danger_words_in_result_notes_stop_the_repair(engine):
+    sid, _ = to_prepare(engine)
+    engine.next_step(sid)
+    engine.confirm_gate(sid)
+    walk_to_verify(engine, sid)
+    out = engine.report_result(sid, fixed=True, notes="it works but I smell burning")
+    assert out.session.state == State.STOPPED
+
+
+def test_a_wrong_appliance_can_be_corrected_before_the_manual_is_confirmed(engine):
+    sid = engine.start_repair("priya", "beeping").session.id
+    engine.safety_check(sid)
+    engine.identify_appliance(sid, appliance_type="washer")
+    out = engine.identify_appliance(sid, appliance_type="dishwasher")
+    assert out.session.appliance_id == "dishwasher" and out.session.state == State.MANUAL
