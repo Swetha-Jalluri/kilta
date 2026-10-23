@@ -5,6 +5,7 @@ DATA_DIR ?= data
 # Server :8765 and bridge :8000 (web joins in Phase 3). Ctrl-C stops both.
 dev:
 	@trap 'kill 0' INT TERM EXIT; \
+	if [ -f .env ]; then set -a; . ./.env; set +a; fi; \
 	(cd server && uv run kilta-server) & \
 	(cd bridge && uv run kilta-bridge) & \
 	wait

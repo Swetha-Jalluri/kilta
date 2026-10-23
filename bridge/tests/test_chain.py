@@ -336,3 +336,55 @@ def test_the_default_chain_order_is_flash_lite_groq_flash_ollama():
         "gemini:gemini-3.5-flash",
         "ollama:qwen3:8b",
     ]
+
+
+async def test_a_turn_budget_is_shared_so_a_slow_link_cannot_starve_the_next():
+    from .fakes import SlowModel
+
+    chain = FallbackModel(
+        [Link("slow", SlowModel()), Link("good", ok_model())],
+        retries=2,
+        first_token_timeout=60,
+        sleep=Sleeps(),
+    )
+    chain.begin_turn(budget=4)
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    await run(chain)
+    assert chain.last_used == "good" and loop.time() - start < 4
+
+
+async def test_a_turn_with_no_time_left_fails_fast():
+    chain = FallbackModel([Link("a", ok_model())], clock=lambda: 100.0)
+    chain.begin_turn(budget=1)
+    chain._clock = lambda: 200.0  # the budget is long gone
+    with pytest.raises(AllModelsFailed):
+        await run(chain)
+
+
+async def test_a_link_cancelled_by_the_turn_deadline_is_skipped_next_time():
+    now = [0.0]
+    chain = FallbackModel(
+        [
+            Link("slow", __import__("tests.fakes", fromlist=["SlowModel"]).SlowModel()),
+            Link("good", ok_model()),
+        ],
+        retries=0,
+        cooldown=30,
+        clock=lambda: now[0],
+        first_token_timeout=60,
+        sleep=Sleeps(),
+    )
+    task = asyncio.create_task(run(chain))
+    await asyncio.sleep(0.05)
+    task.cancel()  # what the agent's turn timeout does
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert chain.links[0].down_until == 30
+
+
+def test_a_model_that_was_too_slow_is_skipped_not_asked_again():
+    from kilta_bridge.chain import FirstTokenTimeout
+
+    assert is_retryable(FirstTokenTimeout("no response within 20s")) is False
+    assert is_retryable(TimeoutError("read timed out")) is True

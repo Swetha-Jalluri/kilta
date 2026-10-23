@@ -77,6 +77,8 @@ def quota_delay(error: BaseException) -> float | None:
 def is_retryable(error: BaseException) -> bool:
     if quota_delay(error) is not None:
         return False
+    if isinstance(error, FirstTokenTimeout):
+        return False  # a model that did not answer in time is skipped, not asked again
     if isinstance(error, ModelThrottledException | TimeoutError | asyncio.TimeoutError):
         return True
     if isinstance(error, httpx.TimeoutException | httpx.ConnectError | ConnectionError):
@@ -137,6 +139,7 @@ class FallbackModel(Model):
         self.tool_filter: Callable[[list[Any]], list[Any]] | None = None
         self.last_used: str | None = None
         self.attempts: list[dict[str, Any]] = []
+        self._deadline: float | None = None  # when this turn's model calls must be done
 
     # --- Model interface -------------------------------------------------------------------
 
@@ -150,9 +153,13 @@ class FallbackModel(Model):
     def structured_output(self, output_model, prompt, system_prompt=None, **kwargs):  # type: ignore[override]
         return self.links[0].model.structured_output(output_model, prompt, system_prompt, **kwargs)
 
-    def begin_turn(self) -> None:
+    def begin_turn(self, budget: float | None = None) -> None:
+        """Start a turn. `budget` is the seconds all of its model calls together may take: the
+        chain shares what is left among the models still to try, so a slow link cannot use up the
+        time the next one needs."""
         self.last_used = None
         self.attempts = []
+        self._deadline = self._clock() + budget if budget else None
 
     def _candidates(self) -> list[Link]:
         now = self._clock()
@@ -175,16 +182,25 @@ class FallbackModel(Model):
         for index, link in enumerate(candidates):
             for attempt in range(self.retries + 1):
                 started = False
+                timeout = link.first_token_timeout or self.first_token_timeout
+                if self._deadline is not None:
+                    left = self._deadline - self._clock()
+                    if left <= 0:
+                        raise AllModelsFailed(self.attempts)
+                    timeout = min(timeout, max(left / (len(candidates) - index), 2.0))
                 try:
                     await link.pace()
                     inner = link.model.stream(messages, tool_specs, system_prompt, **kwargs)
-                    timeout = link.first_token_timeout or self.first_token_timeout
                     async for event in self._with_first_token_timeout(inner, timeout):
                         started = True
                         yield event
                     link.down_until = 0.0
                     self.last_used = link.name
                     return
+                except asyncio.CancelledError:
+                    # The turn ran out of time inside this link: do not walk into it again.
+                    link.down_until = self._clock() + self.cooldown
+                    raise
                 except Exception as error:
                     if started:
                         raise
@@ -228,12 +244,19 @@ class FallbackModel(Model):
         deadline = loop.time() + timeout
         held: list[Any] = []
         while True:
+            pending = asyncio.ensure_future(anext(iterator))
             try:
-                event = await asyncio.wait_for(anext(iterator), max(deadline - loop.time(), 0.001))
+                done, _ = await asyncio.wait({pending}, timeout=max(deadline - loop.time(), 0.001))
+            except asyncio.CancelledError:  # the whole turn was cancelled
+                pending.cancel()
+                raise
+            if not done:  # only our own clock produces FirstTokenTimeout
+                pending.cancel()
+                raise FirstTokenTimeout(f"no response within {timeout:.0f}s")
+            try:
+                event = pending.result()  # a provider's own errors come through unchanged
             except StopAsyncIteration:
                 break
-            except TimeoutError as error:
-                raise FirstTokenTimeout(f"no response within {timeout:.0f}s") from error
             if "messageStart" in event:
                 held.append(event)
                 continue

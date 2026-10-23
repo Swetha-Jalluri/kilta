@@ -26,7 +26,7 @@ Versions: `mcp` 1.30.0 (pinned `>=1.27,<2`), spec 2025-11-25, Streamable HTTP on
 ## Agent Skills (agentskills.io)
 ## AWS: Strands Agents SDK (AWS Builder mini challenge: describe exactly how Strands is used)
 
-Version: `strands-agents` 1.62.0 with the `gemini`, `openai` and `ollama` extras. **No AWS account or AWS service is used**: no Bedrock, AgentCore or S3. Strands is the open-source agent SDK only, and it runs locally.
+Version: `strands-agents` 1.62.0 with the `gemini`, `openai` and `ollama` extras. Strands is the AWS-originated, open-source agent SDK, which the hackathon rules name as qualifying for the AWS Builder challenge. It runs locally inside the bridge. No hosted AWS service (Bedrock, AgentCore, S3) is called and no AWS account is needed, so the project has no AWS bill.
 
 1. **What we used it for.** The agent loop of the Alexa+ stand-in (`bridge/`). One `Agent` per household conversation, with `MCPClient(url=...)` connecting to the Kilta MCP server over Streamable HTTP (spec 2025-11-25) so every Kilta tool is a live MCP call. We also use:
    - **Hooks:** `BeforeToolCallEvent` to cancel a tool call (`cancel_tool`) and to replace invented arguments, and `AfterToolCallEvent` to capture each call's `structuredContent` for the card, the state and the live tool-call log.

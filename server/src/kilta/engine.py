@@ -491,8 +491,13 @@ class Engine:
         """The newest session was a safety stop: carry it over unless the user is clearly
         talking about a different appliance."""
         prior = self.store.latest_session()
-        if not prior or prior.state != State.STOPPED:
+        if not prior:
             return None
+        if prior.state != State.STOPPED:
+            # A repair that already inherited a stop passes it on, so asking to start again
+            # cannot wash it away.
+            open_ = prior.state not in (State.FIXED, State.HANDOFF)
+            return prior.prior_stop if (prior.prior_stop and open_) else None
         appliances = self.store.appliances()
         said = description.lower()
 
@@ -523,6 +528,10 @@ class Engine:
                 refused=True,
                 reason="unknown_member",
             )
+        latest = self.store.latest_session()
+        if latest and latest.state == State.SAFETY_RECHECK:
+            # An unanswered danger question cannot be dodged by starting over.
+            return self._refuse(self._recheck_question(latest), "safety_recheck")
         prior_stop = self._prior_stop_for(description)
         s = self.store.new_session(member_id.lower() if member_id else None, description)
         s.appliance_hint = self._appliance_named_in(description)
@@ -905,6 +914,8 @@ class Engine:
             return self._enter_recheck(s, notes)
         last = len(proc.steps) - 1
         if fixed and s.state == State.STEPS and s.step_index == last:
+            if self._pending_gate(s):  # same rule as next_step: a gate holds until confirmed
+                return self._refuse(self._step(s, blocked=True), "gate_unconfirmed")
             # "Fixed" is only recorded once the user has been asked whether it worked.
             s.state = State.VERIFY
             self._save(s, "finished steps, verifying")

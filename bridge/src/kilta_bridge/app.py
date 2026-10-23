@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -65,17 +65,18 @@ def create_app(settings: Settings | None = None, chain: FallbackModel | None = N
     async def events(replay: int = Query(default=0, ge=0, le=200)) -> StreamingResponse:
         async def stream() -> AsyncIterator[str]:
             yield ": connected\n\n"
-            subscription = bus.subscribe(replay)
+            queue = bus.open(replay)
             try:
                 while True:
                     try:
-                        event = await asyncio.wait_for(anext(subscription), timeout=15)
+                        # Cancelling queue.get() on a timeout is safe; the queue stays open.
+                        event = await asyncio.wait_for(queue.get(), timeout=settings.sse_keepalive)
                     except TimeoutError:
                         yield ": keep-alive\n\n"
                         continue
                     yield sse_format(event)
             finally:
-                await subscription.aclose()
+                bus.close(queue)
 
         return StreamingResponse(
             stream(),
@@ -99,9 +100,12 @@ def create_app(settings: Settings | None = None, chain: FallbackModel | None = N
         }
 
     @app.post("/api/reset")
-    async def reset() -> dict:
+    async def reset(x_kilta_demo: str | None = Header(default=None)) -> dict:
         if not settings.demo_mode:
             raise HTTPException(status_code=403, detail="reset is only available in demo mode")
+        if x_kilta_demo != "1":
+            # A custom header forces a CORS preflight, so a random web page cannot wipe the demo.
+            raise HTTPException(status_code=400, detail="send the header X-Kilta-Demo: 1")
         async with kilta.lock:
             clear_runtime_data(settings.data_dir)
             kilta.reset()

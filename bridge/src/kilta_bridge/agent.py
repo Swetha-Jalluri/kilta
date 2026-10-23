@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -35,7 +37,16 @@ ASKING_CARDS = {
 ADVANCING = {
     "identify_appliance", "find_manual", "quick_checks", "diagnose", "next_step", "confirm_gate",
     "go_back", "pause_repair", "resume_repair", "report_result", "share_insight", "safety_check",
+    "start_repair",
 }  # fmt: skip
+DANGER_FIRST = (
+    "The user just said something that may be dangerous (burning, smoke, sparks, gas, a shock). "
+    "Call safety_check with their answer before anything else."
+)
+FALLBACK_DANGER_WORDS = frozenset(
+    {"burning", "burnt", "smoke", "smoking", "spark", "sparks", "fire", "gas", "shock", "quemado",
+     "humo", "chispas", "fuego"}
+)  # fmt: skip
 BUSY_SPEECH = "Sorry, I lost my train of thought for a second. Could you say that again?"
 
 
@@ -69,7 +80,9 @@ class KiltaAgent:
         self._calls: list[ToolCall] = []
         self._started: dict[str, float] = {}
         self._asked_this_turn = False  # the user was asked something in this turn
+        self._danger_pending = False  # the user's message has danger words and nothing answered
         self._cancelled: set[str] = set()
+        self._danger_words: frozenset[str] | None = None
         self.state: str | None = None
         self.session_id: str | None = None
         self.card: dict[str, Any] | None = None
@@ -166,6 +179,13 @@ class KiltaAgent:
         if self._asked_this_turn and self._moves_on(use["name"], use.get("input") or {}):
             event.cancel_tool = NOT_YET
             self._cancelled.add(use["toolUseId"])
+        elif use["name"] == "safety_check":
+            self._danger_pending = False  # the model has dealt with the danger words
+        elif self._danger_pending and use["name"] in ADVANCING and use["name"] != "start_repair":
+            # The engine only sees the danger words a model passes on. If the user's own message
+            # has them, nothing moves on until safety_check has been called.
+            event.cancel_tool = DANGER_FIRST
+            self._cancelled.add(use["toolUseId"])
 
     def _after_tool(self, event: AfterToolCallEvent) -> None:
         use = event.tool_use
@@ -225,6 +245,15 @@ class KiltaAgent:
             f"pace={pace}; active_session={session}]"
         )
 
+    def _has_danger_words(self, text: str) -> bool:
+        if self._danger_words is None:
+            path = self.settings.data_dir / "safety.json"
+            try:
+                self._danger_words = frozenset(json.loads(path.read_text())["danger_keywords"])
+            except (OSError, KeyError, ValueError):
+                self._danger_words = FALLBACK_DANGER_WORDS
+        return bool(set(re.findall(r"[^\W\d_]+", text.lower())) & self._danger_words)
+
     def _scrub_cancelled(self, start: int) -> None:
         """Take calls the host cancelled out of the history. Left in, a small model learns from
         them that it must not call the tool again, and stops answering."""
@@ -245,9 +274,9 @@ class KiltaAgent:
     def _truthful_speech(self, speech: str) -> str:
         """If the engine refused to record "fixed", the user must hear the engine's question, not
         a celebration. A model has answered "great job!" right after that refusal."""
-        last = self._calls[-1] if self._calls else None
-        if last and last.reason == "verify_first" and last.say:
-            return last.say
+        asked_first = [c for c in self._calls if c.reason == "verify_first" and c.say]
+        if asked_first and self.state == "VERIFY":
+            return asked_first[-1].say
         return speech
 
     def _safety_speech(self, speech: str, language: str) -> str:
@@ -271,8 +300,9 @@ class KiltaAgent:
         snapshot = list(self.agent.messages) if self.agent else []
         self._calls = []
         self._asked_this_turn = False
+        self._danger_pending = self._has_danger_words(request.text)
         self._cancelled.clear()
-        self.chain.begin_turn()
+        self.chain.begin_turn(self.settings.turn_timeout * 0.9)
         self.bus.publish(
             {
                 "type": "turn_start",

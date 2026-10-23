@@ -33,8 +33,15 @@ def test_every_engine_state_has_a_tool_list():
 @pytest.mark.parametrize("state", [None, *engine_states(), "SOMETHING_NEW"])
 def test_danger_reporting_and_state_lookup_are_available_in_every_state(state):
     names = {s["name"] for s in specs_for_state(SPECS, state)}
-    assert {"safety_check", "get_repair_state", "start_repair", "get_household"} <= names
+    assert {"safety_check", "get_repair_state", "get_household"} <= names
     assert ALWAYS <= names
+
+
+@pytest.mark.parametrize("state", [s for s in engine_states()])
+def test_start_repair_is_only_offered_when_no_repair_is_under_way(state):
+    names = {s["name"] for s in specs_for_state(SPECS, state)}
+    assert ("start_repair" in names) == (state in {"STOPPED", "FIXED", "HANDOFF"})
+    assert "start_repair" in {s["name"] for s in specs_for_state(SPECS, None)}
 
 
 def test_an_unknown_state_gets_every_tool():
@@ -44,7 +51,7 @@ def test_an_unknown_state_gets_every_tool():
 
 def test_before_the_safety_answer_the_model_cannot_even_see_the_repair_tools():
     names = {s["name"] for s in specs_for_state(SPECS, "SAFETY_CHECK")}
-    assert names == {"get_household", "start_repair", "safety_check", "get_repair_state"}
+    assert names == {"get_household", "safety_check", "get_repair_state"}
     assert names == {s["name"] for s in specs_for_state(SPECS, "SAFETY_RECHECK")}
 
 

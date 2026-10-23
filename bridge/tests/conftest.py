@@ -112,6 +112,7 @@ def start_bridge(mcp_server: McpServer) -> Iterator[BridgeFactory]:
         settings: Settings | None = None,
         demo_mode: bool = True,
         mcp_url: str | None = None,
+        sse_keepalive: float = 15.0,
         **chain_kwargs,
     ) -> Bridge:
         """Pass `links` for a fake chain, or `settings` to build the real chain from them."""
@@ -121,6 +122,7 @@ def start_bridge(mcp_server: McpServer) -> Iterator[BridgeFactory]:
                 data_dir=mcp_server.data_dir,
                 demo_mode=demo_mode,
                 retry_base_delay=0.0,
+                sse_keepalive=sse_keepalive,
             )
             chain_kwargs.setdefault("base_delay", 0.0)
             chain = FallbackModel(links or [], **chain_kwargs)

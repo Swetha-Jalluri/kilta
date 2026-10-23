@@ -1,6 +1,7 @@
 import json
 import threading
 import time
+from dataclasses import replace
 
 import httpx
 from strands.types.exceptions import ModelThrottledException
@@ -11,6 +12,8 @@ from kilta_bridge.prompt import build_system_prompt
 
 from .conftest import free_port
 from .fakes import FailingModel, FlakyModel, Plan, ScriptedModel
+
+DEMO = {"X-Kilta-Demo": "1"}
 
 
 def scripted(*plans: Plan) -> ScriptedModel:
@@ -167,7 +170,7 @@ def test_reset_clears_the_conversation_and_the_demo_data(start_bridge):
     bridge = start_bridge([Link("scripted", model)])
     bridge.turn("My dishwasher is beeping")
     assert any((bridge.mcp.data_dir / "sessions").glob("r-*.json"))
-    reset = httpx.post(f"{bridge.url}/api/reset", timeout=10)
+    reset = httpx.post(f"{bridge.url}/api/reset", headers=DEMO, timeout=10)
     assert reset.status_code == 200 and reset.json()["ok"] is True
     assert not (bridge.mcp.data_dir / "sessions").exists()
     # The conversation restarted: the scripted model is back on its first plan, and no session
@@ -178,7 +181,7 @@ def test_reset_clears_the_conversation_and_the_demo_data(start_bridge):
 
 def test_reset_is_refused_outside_demo_mode(start_bridge):
     bridge = start_bridge([Link("scripted", scripted())], demo_mode=False)
-    assert httpx.post(f"{bridge.url}/api/reset", timeout=10).status_code == 403
+    assert httpx.post(f"{bridge.url}/api/reset", headers=DEMO, timeout=10).status_code == 403
 
 
 def test_reset_brings_back_the_seeded_repair_history(start_bridge):
@@ -191,7 +194,7 @@ def test_reset_brings_back_the_seeded_repair_history(start_bridge):
     bridge.turn("My dishwasher is beeping")
     (bridge.mcp.data_dir / "state").mkdir(exist_ok=True)
     (bridge.mcp.data_dir / "state" / "repairs.json").write_text("{}")
-    httpx.post(f"{bridge.url}/api/reset", timeout=10)
+    httpx.post(f"{bridge.url}/api/reset", headers=DEMO, timeout=10)
     assert not (bridge.mcp.data_dir / "state").exists()
     assert (bridge.mcp.data_dir / "appliances.json").exists()  # the seed data is never touched
 
@@ -342,7 +345,7 @@ def test_each_model_call_sees_only_the_tools_for_the_current_state(start_bridge)
     bridge.turn("My dishwasher is beeping")
     first_call, after_start = model.seen_tools[0], model.seen_tools[1]
     assert "list_appliances" in first_call and "safety_check" in first_call  # no repair yet
-    assert set(after_start) == {"get_household", "start_repair", "safety_check", "get_repair_state"}
+    assert set(after_start) == {"get_household", "safety_check", "get_repair_state"}
     bridge.turn("No, nothing like that")
     # the new turn starts in SAFETY_CHECK; once cleared the next call is in IDENTIFY
     assert set(model.seen_tools[2]) == set(after_start)
@@ -531,3 +534,136 @@ def test_a_refused_fixed_is_not_celebrated(start_bridge):
     assert call["name"] == "report_result" and call["reason"] == "verify_first"
     assert resp["state"] == "VERIFY"
     assert "Great job" not in resp["speech"] and resp["speech"].endswith("Did it work?")
+
+
+# --- review fixes ----------------------------------------------------------------------------
+
+
+def test_reset_needs_the_demo_header(start_bridge):
+    bridge = start_bridge([Link("scripted", scripted())])
+    assert httpx.post(f"{bridge.url}/api/reset", timeout=10).status_code == 400
+
+
+def test_sse_keeps_delivering_after_idle_keepalives(start_bridge):
+    """The stream used to end after its first 15 s idle gap."""
+    bridge = start_bridge(
+        [Link("scripted", scripted(Plan([("get_household", {})])))], sse_keepalive=0.15
+    )
+    lines: list[str] = []
+    ready = threading.Event()
+
+    def read() -> None:
+        with httpx.stream("GET", f"{bridge.url}/api/events", timeout=30) as response:
+            ready.set()
+            for line in response.iter_lines():
+                lines.append(line)
+                if line == "event: turn_end":
+                    return
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    assert ready.wait(10)
+    time.sleep(0.8)  # several keep-alive intervals with nothing to say
+    bridge.turn("hi")
+    reader.join(10)
+    assert lines.count(": keep-alive") >= 3 and "event: turn_end" in lines
+
+
+def test_a_second_start_repair_cannot_walk_away_from_an_open_safety_question(start_bridge):
+    model = scripted(
+        Plan([("start_repair", {"description": "my dishwasher smells like burning"})]),
+        Plan([("start_repair", {"description": "my dishwasher is beeping"})]),
+    )
+    bridge = start_bridge([Link("scripted", model)])
+    first = bridge.turn("my dishwasher smells like burning")
+    assert first["state"] == "SAFETY_RECHECK"
+    second = bridge.turn("it is beeping")
+    assert second["tool_calls"][0]["reason"] == "safety_recheck"
+    assert second["state"] == "SAFETY_RECHECK" and second["session_id"] == first["session_id"]
+    # and the model is no longer even offered start_repair mid-repair
+    assert "start_repair" not in model.seen_tools[-1]
+
+
+def test_a_failed_refused_fixed_is_still_not_celebrated_when_more_calls_follow(start_bridge):
+    def one(*call, say="Okay."):
+        return Plan([call], say=say)
+
+    plans_ = [
+        one("start_repair", {"description": "my dishwasher shows E24"}),
+        one("safety_check", {"danger_reported": False}),
+        one("find_manual", {}),
+        one("diagnose", {"error_code": "E24"}),
+        one("next_step", {}),
+        Plan([("confirm_gate", {"confirmed": True}), ("next_step", {})]),
+        *[one("next_step", {}) for _ in range(4)],
+        one("confirm_gate", {"confirmed": True}),
+        one("next_step", {}),
+        one("next_step", {}),
+        Plan(
+            [("report_result", {"outcome": "fixed"}), ("get_repair_state", {})],
+            say="Great job, it's fixed!",
+        ),
+    ]
+    bridge = start_bridge([Link("scripted", scripted(*plans_))])
+    for text in ["E24", "no", "yes", "shut", "ready", "unplugged", "n", "n", "n", "n"]:
+        bridge.turn(text)
+    for text in ("power off", "next", "next"):
+        bridge.turn(text)
+    resp = bridge.turn("next")
+    assert [c["name"] for c in resp["tool_calls"]] == ["report_result", "get_repair_state"]
+    assert "Great job" not in resp["speech"] and resp["speech"].endswith("Did it work?")
+
+
+def test_danger_words_in_the_users_message_hold_every_advancing_call(start_bridge):
+    """Danger mid-repair: the engine only sees what the model passes on, so the bridge makes
+    safety_check come first when the user's own words mention it."""
+    plans_ = [
+        Plan([("start_repair", {"description": "my dishwasher shows E24"})]),
+        Plan([("safety_check", {"danger_reported": False})]),
+        Plan([("find_manual", {})]),
+        Plan([("diagnose", {"error_code": "E24"})]),
+        Plan([("next_step", {})]),
+        # the user says "I smell burning" at step 1; a careless model just carries on
+        Plan(
+            [("next_step", {}), ("safety_check", {"danger_reported": True, "details": "burning"})]
+        ),
+    ]
+    bridge = start_bridge([Link("scripted", scripted(*plans_))])
+    for text in ["E24", "no", "yes", "it's shut", "ready"]:
+        bridge.turn(text)
+    resp = bridge.turn("wait, I smell burning")
+    first, second = resp["tool_calls"]
+    assert first["name"] == "next_step" and first["reason"] == "not_answered_by_user"
+    assert second["name"] == "safety_check" and second["ok"] and resp["state"] == "STOPPED"
+
+
+def test_spanish_danger_words_also_hold_the_turn(start_bridge):
+    plans_ = [
+        Plan([("start_repair", {"description": "mi lavavajillas"})]),
+        Plan([("safety_check", {"danger_reported": False})]),
+        Plan([("identify_appliance", {"appliance_type": "dishwasher"}), ("find_manual", {})]),
+    ]
+    bridge = start_bridge([Link("scripted", scripted(*plans_))])
+    bridge.turn("mi lavavajillas pita")
+    bridge.turn("no")
+    resp = bridge.turn("huele a quemado")
+    assert resp["tool_calls"][0]["reason"] == "not_answered_by_user"
+    assert resp["state"] != "QUICK_CHECKS"
+
+
+def test_the_chain_gives_each_remaining_model_a_share_of_the_turn(start_bridge):
+    """A slow first model must not eat the time the next one needs (reviewer finding)."""
+    from .fakes import SlowModel
+
+    good = scripted(Plan([("get_household", {})], say="Hi from the second model."))
+    bridge = start_bridge(
+        [Link("slow", SlowModel(), first_token_timeout=60), Link("good", good)],
+        retries=0,
+        first_token_timeout=60,
+        cooldown=30,
+    )
+    bridge.app.state.kilta.settings = replace(bridge.app.state.kilta.settings, turn_timeout=4.0)
+    started = time.monotonic()
+    resp = bridge.turn("hi")
+    assert resp["model"] == "good" and resp["speech"] == "Hi from the second model."
+    assert time.monotonic() - started < 6

@@ -41,6 +41,7 @@ class Settings:
     model_only: str = ""
     ollama_first_token_timeout: float = 120.0  # a cold local model has to load first
     turn_timeout: float = 120.0
+    sse_keepalive: float = 15.0
     cors_origins: tuple[str, ...] = ("http://localhost:5173", "http://127.0.0.1:5173")
 
     @classmethod

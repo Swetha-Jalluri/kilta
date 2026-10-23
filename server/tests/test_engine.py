@@ -921,3 +921,32 @@ def test_an_unknown_id_after_the_appliance_is_known_does_not_ask_again(engine):
     engine.safety_check(sid, danger_reported=False)  # dishwasher confirmed
     out = engine.identify_appliance(sid, appliance_id="something-else")
     assert out.session.appliance_id == "dishwasher" and out.card["type"] == "appliance"
+
+
+# --- starting over cannot wash away a safety stop -------------------------------------------
+
+
+def test_starting_again_after_a_stop_keeps_remembering_the_stop(engine):
+    first = engine.start_repair("priya", "I smell burning from the dishwasher").session.id
+    engine.safety_check(first, danger_reported=True, details="burning")
+    second = engine.start_repair("priya", "the dishwasher is beeping")
+    assert second.session.prior_stop and "Earlier you reported burning" in second.say
+    third = engine.start_repair("priya", "my dishwasher is beeping")  # a second "start" call
+    assert third.session.prior_stop and "Earlier you reported burning" in third.say
+    assert third.session.state == State.SAFETY_CHECK  # and nothing is cleared by starting over
+    assert not third.session.safety_cleared
+
+
+def test_an_unanswered_danger_question_cannot_be_dodged_by_starting_over(engine):
+    first = engine.start_repair("priya", "my dishwasher smells like burning").session
+    assert first.state == State.SAFETY_RECHECK
+    again = engine.start_repair("priya", "my dishwasher is beeping")
+    assert again.refused and again.reason == "safety_recheck"
+    assert again.session.id == first.id and again.card["type"] == "safety_recheck"
+    stopped = engine.safety_check(first.id, danger_reported=True)
+    assert stopped.session.state == State.STOPPED
+
+
+@pytest.mark.parametrize("text", ["huele a quemado", "sale humo del lavavajillas", "hay chispas"])
+def test_spanish_danger_words_trigger_the_recheck(engine, text):
+    assert engine.start_repair("lucia", text).session.state == State.SAFETY_RECHECK

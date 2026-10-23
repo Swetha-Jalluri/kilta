@@ -27,16 +27,24 @@ class EventBus:
     def recent(self, limit: int = 50) -> list[dict[str, Any]]:
         return list(self._history)[-limit:] if limit > 0 else []
 
-    async def subscribe(self, replay: int = 0) -> AsyncIterator[dict[str, Any]]:
+    def open(self, replay: int = 0) -> asyncio.Queue[dict[str, Any]]:
+        """A queue that receives every event from now on, after `replay` recent ones."""
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         for event in self.recent(replay):
             queue.put_nowait(event)
         self._subscribers.add(queue)
+        return queue
+
+    def close(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        self._subscribers.discard(queue)
+
+    async def subscribe(self, replay: int = 0) -> AsyncIterator[dict[str, Any]]:
+        queue = self.open(replay)
         try:
             while True:
                 yield await queue.get()
         finally:
-            self._subscribers.discard(queue)
+            self.close(queue)
 
 
 def sse_format(event: dict[str, Any]) -> str:

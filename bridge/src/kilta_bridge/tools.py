@@ -5,23 +5,26 @@ the engine's current state cuts that fixed cost, which matters on free tiers (Gr
 tokens a minute). The engine still refuses anything out of order, so this is an optimisation,
 never the safety mechanism.
 
-Always available, in every state: get_repair_state, safety_check (the only way to report danger),
-start_repair and get_household. A state the bridge does not know about gets every tool.
+Always available, in every state: get_repair_state, safety_check (the only way to report danger)
+and get_household. A state the bridge does not know about gets every tool.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-ALWAYS = frozenset({"get_repair_state", "safety_check", "start_repair", "get_household"})
+ALWAYS = frozenset({"get_repair_state", "safety_check", "get_household"})
+# Starting a repair is offered only when none is under way, so a model cannot start over and
+# walk away from an open safety question or a stop.
+STARTING = frozenset({"start_repair"})
 
 REPORTING = frozenset({"check_warranty", "build_parts_cart", "get_health_card", "get_insights"})
 
 BY_STATE: dict[str | None, frozenset[str]] = {
-    None: frozenset({"list_appliances", "lookup_orders", "search_manual"}) | REPORTING,
+    None: STARTING | frozenset({"list_appliances", "lookup_orders", "search_manual"}) | REPORTING,
     "SAFETY_CHECK": frozenset(),
     "SAFETY_RECHECK": frozenset(),
-    "STOPPED": frozenset({"create_technician_summary", "draft_landlord_message"}),
+    "STOPPED": STARTING | frozenset({"create_technician_summary", "draft_landlord_message"}),
     "IDENTIFY": frozenset({"identify_appliance", "lookup_orders", "list_appliances"}),
     "MANUAL": frozenset({"identify_appliance", "find_manual", "search_manual"}),
     "QUICK_CHECKS": frozenset({"quick_checks", "diagnose", "find_manual", "search_manual"}),
@@ -30,8 +33,10 @@ BY_STATE: dict[str | None, frozenset[str]] = {
     "STEPS": frozenset({"next_step", "confirm_gate", "pause_repair", "go_back", "report_result"}),
     "PAUSED": frozenset({"resume_repair", "report_result"}),
     "VERIFY": frozenset({"report_result", "go_back", "next_step"}),
-    "FIXED": frozenset({"share_insight"}) | REPORTING,
-    "HANDOFF": frozenset({"create_technician_summary", "draft_landlord_message"}) | REPORTING,
+    "FIXED": STARTING | frozenset({"share_insight"}) | REPORTING,
+    "HANDOFF": STARTING
+    | frozenset({"create_technician_summary", "draft_landlord_message"})
+    | REPORTING,
 }
 
 

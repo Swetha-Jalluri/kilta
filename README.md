@@ -9,14 +9,22 @@ isn't safe to do at home.
 > Work in progress for the Build, Ship, Shape: Amazon Developer Hackathon (Alexa+ track, AWS Builder).
 > Full README, quickstart, and demo coming in Phase 6.
 
-## Run the MCP server (Phase 1)
+## Run it (Phases 1 and 2)
+
+Needs `uv` (Python 3.12+). Copy `.env.example` to `.env` and add `GEMINI_API_KEY` and `GROQ_API_KEY`
+(both free tiers; optional, see below). Ollama is the offline fallback: `ollama pull qwen3:8b`.
 
 ```bash
-make dev      # Kilta MCP server at http://127.0.0.1:8765/mcp (Streamable HTTP, spec 2025-11-25)
-make check    # ruff + tests
-make reset    # restore the demo data and clear sessions
+make dev        # MCP server :8765/mcp (Streamable HTTP, spec 2025-11-25) and bridge :8000
+make check      # ruff + all tests (no network, no API keys)
+make test-live  # golden conversations with the real models (needs the keys; slow, paced)
+make reset      # restore the demo data and clear sessions
 ```
 
-Inspect it: `npx @modelcontextprotocol/inspector --cli http://localhost:8765/mcp --transport http --method tools/list`
+The bridge is the Alexa+ stand-in: `POST /api/turn` (`{member_id, text, language}`), `GET /api/events`
+(live tool-call log, server-sent events), `GET /api/health`, `POST /api/reset` (send `X-Kilta-Demo: 1`).
+Model order: Gemini Flash-Lite, Groq, Gemini Flash, local Ollama. Force one with `KILTA_MODEL_ONLY`.
+
+Inspect the server: `npx @modelcontextprotocol/inspector --cli http://localhost:8765/mcp --transport http --method tools/list`
 
 License: MIT
