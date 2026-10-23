@@ -142,3 +142,23 @@ class FailsAfterMessageStart(_BaseFake):
         self.calls += 1
         yield {"messageStart": {"role": "assistant"}}
         raise self.error
+
+
+class EmptyThenOk(_BaseFake):
+    """Answers with an empty message `empties` times, then behaves like `inner`."""
+
+    def __init__(self, inner: _BaseFake, empties: int = 1) -> None:
+        self.inner, self.empties, self.calls = inner, empties, 0
+
+    async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        self.calls += 1
+        if self.calls <= self.empties:
+            yield {"messageStart": {"role": "assistant"}}
+            yield {"contentBlockStart": {"start": {}}}
+            yield {"contentBlockDelta": {"delta": {"text": ""}}}
+            yield {"contentBlockStop": {}}
+            yield {"messageStop": {"stopReason": "end_turn"}}
+            yield _usage()
+            return
+        async for event in self.inner.stream(messages, tool_specs, system_prompt, **kwargs):
+            yield event

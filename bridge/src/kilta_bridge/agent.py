@@ -117,6 +117,13 @@ class KiltaAgent:
     def _before_tool(self, event: BeforeToolCallEvent) -> None:
         use = event.tool_use
         self._started[use["toolUseId"]] = time.monotonic()
+        # Models invent session ids ("123456"). The bridge knows the real one.
+        args = use.get("input")
+        if isinstance(args, dict) and "session_id" in args:
+            if self.session_id:
+                args["session_id"] = self.session_id
+            else:
+                del args["session_id"]  # none yet: the server uses the newest
         # Host policy: a turn may not both ask the user something and answer it. Models do
         # this ("No, there's no burning") when the user's message already describes the problem.
         # Reporting danger is always allowed.
@@ -185,6 +192,23 @@ class KiltaAgent:
             f"pace={pace}; active_session={session}]"
         )
 
+    def _scrub_cancelled(self, start: int) -> None:
+        """Take calls the host cancelled out of the history. Left in, a small model learns from
+        them that it must not call the tool again, and stops answering."""
+        if self.agent is None or not self._cancelled:
+            return
+        kept = []
+        for message in self.agent.messages[start:]:
+            blocks = [
+                b
+                for b in message["content"]
+                if b.get("toolUse", {}).get("toolUseId") not in self._cancelled
+                and b.get("toolResult", {}).get("toolUseId") not in self._cancelled
+            ]
+            if blocks:
+                kept.append({**message, "content": blocks})
+        self.agent.messages[start:] = kept
+
     def _safety_speech(self, speech: str, language: str) -> str:
         """A safety stop is spoken by the engine, whatever the model said. Small models have
         answered a stop with "can you tell me more?". In another language the model's own words
@@ -224,10 +248,17 @@ class KiltaAgent:
                 await asyncio.to_thread(self._build)
             assert self.agent is not None
             prompt = f"{self._context(member, language)}\n{request.text}"
-            result = await asyncio.wait_for(
-                self.agent.invoke_async(prompt), self.settings.turn_timeout
-            )
-            speech = _text(result.message)
+            for attempt in (1, 2):
+                result = await asyncio.wait_for(
+                    self.agent.invoke_async(prompt), self.settings.turn_timeout
+                )
+                speech = _text(result.message)
+                if speech or self._calls or attempt == 2:
+                    break
+                # A model that answers with nothing at all (small local models sometimes do):
+                # forget that exchange and ask once more.
+                self.bus.publish({"type": "model_empty", "model": self.chain.last_used})
+                self.agent.messages[:] = snapshot
         except Exception as caught:  # noqa: BLE001 - a turn must always answer
             failure = _unwrap(caught)
             error = (
@@ -241,6 +272,7 @@ class KiltaAgent:
         if not speech:
             spoken = [c.say for c in reversed(self._calls) if c.ok and c.say]
             speech = spoken[0] if spoken and not error else BUSY_SPEECH
+        self._scrub_cancelled(len(snapshot))
         speech = self._safety_speech(speech, language)
         response = TurnResponse(
             speech=speech,

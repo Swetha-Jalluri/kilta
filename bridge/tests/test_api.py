@@ -347,3 +347,53 @@ def test_in_another_language_the_models_words_come_first_then_the_engines(start_
     resp = start_bridge([Link("scripted", scripted(plan))]).turn("Huele a quemado", "lucia")
     assert resp["speech"].startswith("Por favor, aléjese del aparato.")
     assert "emergency number" in resp["speech"]
+
+
+def test_an_empty_model_reply_is_asked_again_once(start_bridge):
+    from .fakes import EmptyThenOk
+
+    inner = scripted(Plan([("get_household", {})], say="Hi Priya."))
+    flaky = EmptyThenOk(inner, empties=1)
+    bridge = start_bridge([Link("small-model", flaky)])
+    resp = bridge.turn("Hey Alexa, connect me to Kilta.")
+    assert resp["error"] is None and resp["speech"] == "Hi Priya."
+    assert [c["name"] for c in resp["tool_calls"]] == ["get_household"]
+
+
+def test_two_empty_replies_end_in_a_spoken_apology_not_a_hang(start_bridge):
+    from .fakes import EmptyThenOk
+
+    flaky = EmptyThenOk(scripted(Plan(say="never reached")), empties=5)
+    resp = start_bridge([Link("small-model", flaky)]).turn("hello")
+    assert resp["speech"].startswith("Sorry, I lost my train of thought")
+
+
+def test_an_invented_session_id_is_replaced_by_the_real_one(start_bridge):
+    model = scripted(
+        Plan([("start_repair", {"description": "beeping"})]),
+        Plan([("get_repair_state", {"session_id": "123456"})]),
+    )
+    bridge = start_bridge([Link("scripted", model)])
+    first = bridge.turn("My dishwasher is beeping")
+    second = bridge.turn("where were we?")
+    call = second["tool_calls"][0]
+    assert call["ok"] and call["arguments"]["session_id"] == first["session_id"]
+    assert second["state"] == "SAFETY_CHECK"
+
+
+def test_a_cancelled_call_does_not_stay_in_the_conversation(start_bridge):
+    plan1 = Plan(
+        [
+            ("start_repair", {"description": "beeping"}),
+            ("safety_check", {"danger_reported": False}),
+        ],
+        say="Quick safety check first.",
+    )
+    model = scripted(plan1, Plan([("safety_check", {"danger_reported": False})], say="Thanks."))
+    bridge = start_bridge([Link("scripted", model)])
+    bridge.turn("My dishwasher is beeping")
+    agent = bridge.app.state.kilta.agent
+    blob = str(agent.messages)
+    assert "safety_check" not in blob and "start_repair" in blob  # only the real call remains
+    second = bridge.turn("No, nothing like that")
+    assert second["tool_calls"][0]["ok"] and second["state"] == "IDENTIFY"
