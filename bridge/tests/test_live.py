@@ -25,7 +25,7 @@ from .scenarios import (
     SCENARIO_B,
     SCENARIO_C,
     SCENARIO_C_CONFIRM,
-    verify,
+    play,
 )
 
 pytestmark = pytest.mark.live
@@ -54,35 +54,33 @@ def live_settings(**overrides) -> Settings:
     settings = Settings(
         gemini_api_key=env.get("GEMINI_API_KEY") or "", groq_api_key=env.get("GROQ_API_KEY") or ""
     )
-    return replace(
+    base = replace(
         settings,
         min_model_interval=pace,
         retries=3,
         retry_base_delay=3.0,
         turn_timeout=420.0,
         model_only=only,
-        **overrides,
     )
+    return replace(base, **overrides)
 
 
-def run_turns(bridge, turns, started: float | None = None) -> list[dict]:
-    responses = []
-    for number, turn in enumerate(turns, 1):
-        resp = bridge.turn(turn.text, turn.member, turn.language)
-        names = " > ".join(c["name"] for c in resp["tool_calls"]) or "(no tools)"
-        print(
-            f"  {number:>2}. [{resp['model']}] {resp['elapsed_ms'] / 1000:5.1f}s "
-            f"{(resp['state'] or NO_STATE):<14} {names}"
-        )
-        for call in resp["tool_calls"]:
-            flag = "" if call["ok"] else f" [{call['reason'] or call['error']}]"
-            print(f"      - {call['name']}({call['arguments']}){flag}")
-        print(f"      user : {turn.text}")
-        print(f"      kilta: {resp['speech']}")
-        verify(resp, turn)
-        assert len(resp["speech"].split()) <= 100, "spoken reply is too long for voice"
-        responses.append(resp)
-    return responses
+def report(number, turn, resp) -> None:
+    names = " > ".join(c["name"] for c in resp["tool_calls"]) or "(no tools)"
+    print(
+        f"  {number:>2}. [{resp['model']}] {resp['elapsed_ms'] / 1000:5.1f}s "
+        f"{(resp['state'] or NO_STATE):<14} {names}"
+    )
+    for call in resp["tool_calls"]:
+        flag = "" if call["ok"] else f" [{call['reason'] or call['error']}]"
+        print(f"      - {call['name']}({call['arguments']}){flag}")
+    print(f"      user : {turn.text}")
+    print(f"      kilta: {resp['speech']}")
+    assert len(resp["speech"].split()) <= 100, "spoken reply is too long for voice"
+
+
+def run_turns(bridge, turns) -> list[dict]:
+    return play(bridge, turns, live=True, report=report)
 
 
 def test_live_scenario_a_dishwasher_e24_fixed(start_bridge):
@@ -129,13 +127,15 @@ def test_live_a_bad_gemini_key_is_answered_by_groq(start_bridge):
     """Fallback proof. Groq's free model is slow and less strict about the flow, so this only
     asserts who answered and how the chain behaved, not the engine state."""
     print("\nFallback proof: invalid Gemini key, Groq answers")
-    bridge = start_bridge(settings=live_settings(gemini_api_key="not-a-real-key"))
+    bridge = start_bridge(
+        settings=live_settings(gemini_api_key="not-a-real-key", model_only="")  # the whole chain
+    )
     first, second = run_turns(bridge, [SCENARIO_A[0]]) + [None]
     second = bridge.turn(SCENARIO_A[1].text, SCENARIO_A[1].member)
     print(f"  2. [{second['model']}] {second['speech']}")
     for resp in (first, second):
         assert resp["model"].startswith("groq:"), resp["model"]
         assert resp["error"] is None and resp["speech"]
-    assert first["fallbacks"][0]["model"] == "gemini:gemini-3.5-flash"
+    assert first["fallbacks"][0]["model"] == "gemini:gemini-3.5-flash-lite"
     assert first["fallbacks"][0]["retryable"] is False  # a bad key is skipped, not retried
     assert first["fallbacks"][0]["error"].startswith("ClientError: 400")

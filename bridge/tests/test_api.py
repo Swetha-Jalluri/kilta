@@ -282,20 +282,15 @@ def test_reporting_danger_is_allowed_in_the_same_turn_as_the_question(start_brid
 def test_a_gate_cannot_be_confirmed_in_the_turn_it_is_asked(start_bridge):
     setup = [
         Plan([("start_repair", {"description": "beeping"})]),
-        Plan(
-            [
-                ("safety_check", {"danger_reported": False}),
-                ("identify_appliance", {"appliance_type": "dishwasher"}),
-                ("find_manual", {}),
-                ("quick_checks", {}),
-            ]
-        ),
+        Plan([("safety_check", {"danger_reported": False})]),
+        Plan([("identify_appliance", {"appliance_type": "dishwasher"})]),
+        Plan([("find_manual", {})]),
         Plan([("diagnose", {"error_code": "E24"})]),
         Plan([("next_step", {}), ("confirm_gate", {"confirmed": True})]),
         Plan([("confirm_gate", {"confirmed": True}), ("next_step", {})]),
     ]
     bridge = start_bridge([Link("scripted", scripted(*setup))])
-    for text in ("beeping", "no", "it's shut, E24"):
+    for text in ("beeping", "no", "the dishwasher", "yes", "it's shut, E24"):
         bridge.turn(text)
     asked = bridge.turn("ready")
     assert asked["tool_calls"][1]["reason"] == "not_answered_by_user"
@@ -303,6 +298,39 @@ def test_a_gate_cannot_be_confirmed_in_the_turn_it_is_asked(start_bridge):
     answered = bridge.turn("it's unplugged")  # the user's own reply, in its own turn
     assert [c["ok"] for c in answered["tool_calls"]] == [True, True]
     assert answered["card"]["step_number"] == 2
+
+
+def test_a_turn_that_asked_a_question_cannot_skip_ahead(start_bridge):
+    """Seen live on Flash-Lite: one turn cleared the safety check, identified the appliance,
+    opened the manual, diagnosed and started step 1, all on the user's behalf."""
+    plan = Plan(
+        [
+            ("start_repair", {"description": "the washer says E31"}),
+            ("safety_check", {"danger_reported": False}),
+            ("identify_appliance", {"appliance_type": "washer"}),
+            ("find_manual", {}),
+            ("diagnose", {"error_code": "E31"}),
+            ("next_step", {}),
+        ],
+        say="Quick safety check first.",
+    )
+    resp = start_bridge([Link("scripted", scripted(plan))]).turn("The washer says E31")
+    ok = [c["name"] for c in resp["tool_calls"] if c["ok"]]
+    assert ok == ["start_repair"] and resp["state"] == "SAFETY_CHECK"
+    assert all(c["reason"] == "not_answered_by_user" for c in resp["tool_calls"][1:])
+
+
+def test_after_a_question_reading_state_and_reporting_danger_still_work(start_bridge):
+    plan = Plan(
+        [
+            ("start_repair", {"description": "beeping"}),
+            ("get_repair_state", {}),
+            ("safety_check", {"danger_reported": True, "details": "burning"}),
+        ]
+    )
+    resp = start_bridge([Link("scripted", scripted(plan))]).turn("beeping")
+    assert [c["ok"] for c in resp["tool_calls"]] == [True, True, True]
+    assert resp["state"] == "STOPPED"
 
 
 def test_each_model_call_sees_only_the_tools_for_the_current_state(start_bridge):
@@ -397,3 +425,109 @@ def test_a_cancelled_call_does_not_stay_in_the_conversation(start_bridge):
     assert "safety_check" not in blob and "start_repair" in blob  # only the real call remains
     second = bridge.turn("No, nothing like that")
     assert second["tool_calls"][0]["ok"] and second["state"] == "IDENTIFY"
+
+
+def test_confirming_the_same_appliance_again_does_not_block_the_manual(start_bridge):
+    """Seen live: after the user said yes, the model re-asked identify_appliance and then
+    find_manual, and the repeat counted as a new question."""
+    model = scripted(
+        Plan([("start_repair", {"description": "my dishwasher is beeping"})]),
+        Plan([("safety_check", {"danger_reported": False})]),
+        Plan([("identify_appliance", {"appliance_type": "dishwasher"}), ("find_manual", {})]),
+    )
+    bridge = start_bridge([Link("scripted", model)])
+    bridge.turn("my dishwasher is beeping")
+    assert bridge.turn("no")["state"] == "MANUAL"
+    resp = bridge.turn("yes")
+    assert [c["ok"] for c in resp["tool_calls"]] == [True, True]
+    assert resp["state"] == "QUICK_CHECKS"
+
+
+def test_correcting_the_appliance_is_a_new_question_and_still_holds_the_turn(start_bridge):
+    model = scripted(
+        Plan([("start_repair", {"description": "my dishwasher is beeping"})]),
+        Plan([("safety_check", {"danger_reported": False})]),
+        Plan([("identify_appliance", {"appliance_type": "washer"}), ("find_manual", {})]),
+    )
+    bridge = start_bridge([Link("scripted", model)])
+    bridge.turn("my dishwasher is beeping")
+    bridge.turn("no")
+    resp = bridge.turn("no, it's the washer")
+    assert resp["tool_calls"][1]["reason"] == "not_answered_by_user"
+    assert resp["state"] == "MANUAL" and resp["card"]["appliance_id"] == "washer"
+
+
+def test_quick_checks_reported_clear_can_be_followed_by_diagnose_in_the_same_turn(start_bridge):
+    model = scripted(
+        Plan([("start_repair", {"description": "my dishwasher shows E24"})]),
+        Plan([("safety_check", {"danger_reported": False})]),
+        Plan([("find_manual", {})]),
+        Plan(
+            [
+                ("quick_checks", {"setting_fixed": False}),
+                ("diagnose", {"error_code": "E24"}),
+            ]
+        ),
+    )
+    bridge = start_bridge([Link("scripted", model)])
+    for text in ("it shows E24", "no", "yes"):
+        bridge.turn(text)
+    resp = bridge.turn("it's shut, E24")
+    assert [c["ok"] for c in resp["tool_calls"]] == [True, True] and resp["state"] == "PREPARE"
+
+
+def test_a_revealed_before_gate_step_ends_the_turn(start_bridge):
+    """Confirming "is the power off?" reveals the sump step. The user has to do it, so the model
+    may not go on to step 7 in the same turn. (Seen live on Flash-Lite.)"""
+    one = lambda *call: Plan([call])  # noqa: E731
+    plans_ = [
+        one("start_repair", {"description": "my dishwasher shows E24"}),
+        one("safety_check", {"danger_reported": False}),
+        one("find_manual", {}),
+        one("diagnose", {"error_code": "E24"}),
+        one("next_step", {}),
+        Plan([("confirm_gate", {"confirmed": True}), ("next_step", {})]),
+        *[one("next_step", {}) for _ in range(4)],  # steps 3, 4, 5, then 6 withheld
+        Plan([("confirm_gate", {"confirmed": True}), ("next_step", {})]),
+    ]
+    bridge = start_bridge([Link("scripted", scripted(*plans_))])
+    for text in ["E24", "no", "yes", "it's shut", "ready", "unplugged", "n", "n", "n", "n"]:
+        last = bridge.turn(text)
+    assert last["card"]["step_number"] == 6 and last["card"]["text_withheld"] is True
+    revealed = bridge.turn("the power is off")
+    assert revealed["card"]["step_number"] == 6 and revealed["card"]["text"].startswith("Check")
+    assert [c["ok"] for c in revealed["tool_calls"]] == [True, False]
+    assert revealed["tool_calls"][1]["reason"] == "not_answered_by_user"
+
+
+def test_a_refused_fixed_is_not_celebrated(start_bridge):
+    """Seen live: the model called report_result(fixed) when the user only said "next", the
+    engine asked first, and the model congratulated the user anyway."""
+
+    def one(*call, say="Okay."):
+        return Plan([call], say=say)
+
+    plans_ = [
+        one("start_repair", {"description": "my dishwasher shows E24"}),
+        one("safety_check", {"danger_reported": False}),
+        one("find_manual", {}),
+        one("diagnose", {"error_code": "E24"}),
+        one("next_step", {}),  # step 1
+        Plan([("confirm_gate", {"confirmed": True}), ("next_step", {})]),  # step 2
+        *[one("next_step", {}) for _ in range(4)],  # steps 3, 4, 5, then 6 withheld
+        one("confirm_gate", {"confirmed": True}),  # step 6 revealed
+        one("next_step", {}),  # step 7
+        one("next_step", {}),  # step 8
+        one("report_result", {"outcome": "fixed"}, say="Great job, it's fixed!"),
+    ]
+    bridge = start_bridge([Link("scripted", scripted(*plans_))])
+    for text in ["E24", "no", "yes", "shut", "ready", "unplugged", "n", "n", "n", "n"]:
+        bridge.turn(text)
+    bridge.turn("the power is off")
+    bridge.turn("next")
+    assert bridge.turn("next")["card"]["step_number"] == 8
+    resp = bridge.turn("next")
+    call = resp["tool_calls"][0]
+    assert call["name"] == "report_result" and call["reason"] == "verify_first"
+    assert resp["state"] == "VERIFY"
+    assert "Great job" not in resp["speech"] and resp["speech"].endswith("Did it work?")

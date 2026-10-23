@@ -598,6 +598,8 @@ class Engine:
         if s.appliance_id and not (appliance_id or model_code or appliance_type):
             return self.present(s)  # already identified: asking again must not undo that
         found = self._match_appliances(appliance_id, model_code, appliance_type)
+        if not found and s.appliance_id:
+            return self.present(s)  # an id that matches nothing must not undo what is known
         if len(found) != 1:
             ask = self._ask_appliance(s)
             if model_code and not found:
@@ -638,6 +640,12 @@ class Engine:
         if appliance_id:
             wanted = appliance_id.lower().strip()
             found = [a for a in appliances if wanted in (a.id, a.manual_id)]
+            code = normalize_code(wanted)  # "dw-300" and "DW300" are the model name
+            found = found or [
+                a
+                for a in appliances
+                if code and code in (normalize_code(a.model), normalize_code(a.model_code))
+            ]
             if found:
                 return found
         if model_code:
@@ -896,11 +904,12 @@ class Engine:
         if self._danger_in(notes):
             return self._enter_recheck(s, notes)
         last = len(proc.steps) - 1
-        if (
-            fixed
-            and s.state != State.VERIFY
-            and not (s.state == State.STEPS and s.step_index == last)
-        ):
+        if fixed and s.state == State.STEPS and s.step_index == last:
+            # "Fixed" is only recorded once the user has been asked whether it worked.
+            s.state = State.VERIFY
+            self._save(s, "finished steps, verifying")
+            return self._refuse(self._verify(s), "verify_first")
+        if fixed and s.state != State.VERIFY:
             return self._refuse(
                 self.present(s), "steps_unfinished", "Let's finish the steps first. "
             )

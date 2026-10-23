@@ -890,3 +890,34 @@ def test_the_manual_id_works_as_an_appliance_id(engine):
     assert engine.identify_appliance(sid, appliance_id="kelvara-wm500").session.appliance_id == (
         "washer"
     )
+
+
+def test_fixed_is_only_recorded_after_the_user_was_asked_whether_it_worked(engine):
+    sid, _ = to_prepare(engine)
+    engine.next_step(sid)
+    engine.confirm_gate(sid)
+    while engine.get_repair_state(sid).card.get("step_number") != 8:
+        out = engine.next_step(sid)
+        if out.refused:
+            engine.confirm_gate(sid)
+    out = engine.report_result(sid, fixed=True)  # "it ran the cycle" must not mean "it works"
+    assert out.refused and out.reason == "verify_first"
+    assert out.session.state == State.VERIFY and out.card["type"] == "verify"
+    assert len(engine.store.appliance("dishwasher").past_repairs) == 1  # nothing recorded yet
+    done = engine.report_result(sid, fixed=True)
+    assert done.session.state == State.FIXED and not done.refused
+    assert len(engine.store.appliance("dishwasher").past_repairs) == 2
+
+
+@pytest.mark.parametrize("said", ["dw-300", "DW300", "DW-300-K7S2", "kelvara-dw300"])
+def test_the_model_name_or_code_works_as_an_appliance_id(engine, said):
+    sid = engine.start_repair("priya", "something is beeping").session.id
+    engine.safety_check(sid, danger_reported=False)
+    assert engine.identify_appliance(sid, appliance_id=said).session.appliance_id == "dishwasher"
+
+
+def test_an_unknown_id_after_the_appliance_is_known_does_not_ask_again(engine):
+    sid = engine.start_repair("priya", "my dishwasher is beeping").session.id
+    engine.safety_check(sid, danger_reported=False)  # dishwasher confirmed
+    out = engine.identify_appliance(sid, appliance_id="something-else")
+    assert out.session.appliance_id == "dishwasher" and out.card["type"] == "appliance"

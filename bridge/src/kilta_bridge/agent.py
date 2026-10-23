@@ -22,10 +22,20 @@ from .tools import specs_for_state
 log = logging.getLogger("kilta.agent")
 
 NOT_YET = (
-    "The user has not replied yet, so you cannot answer for them. End your turn by asking them "
-    "the question, and wait for their answer."
+    "You have already asked the user something this turn, and they have not replied. Do not "
+    "answer for them or move on. End your turn and wait for their reply."
 )
-QUESTION_CARDS = {"safety_question", "safety_recheck"}
+# Cards that put a question or a task to the user. After one, the turn is over.
+ASKING_CARDS = {
+    "safety_question", "safety_recheck", "appliance", "quick_checks", "ask_code", "diagnosis",
+    "verify", "paused", "fixed", "consent",
+}  # fmt: skip
+# Calls that move the repair on. Once the user has been asked something they are held back, so
+# a model cannot skip ahead on the user's behalf. Reporting danger and reading state are not.
+ADVANCING = {
+    "identify_appliance", "find_manual", "quick_checks", "diagnose", "next_step", "confirm_gate",
+    "go_back", "pause_repair", "resume_repair", "report_result", "share_insight", "safety_check",
+}  # fmt: skip
 BUSY_SPEECH = "Sorry, I lost my train of thought for a second. Could you say that again?"
 
 
@@ -58,7 +68,7 @@ class KiltaAgent:
         self._household: dict[str, Any] | None = None
         self._calls: list[ToolCall] = []
         self._started: dict[str, float] = {}
-        self._asked_this_turn = False  # a question or gate was put to the user in this turn
+        self._asked_this_turn = False  # the user was asked something in this turn
         self._cancelled: set[str] = set()
         self.state: str | None = None
         self.session_id: str | None = None
@@ -108,11 +118,37 @@ class KiltaAgent:
         self.bus.publish(event)
 
     @staticmethod
-    def _answers_for_the_user(name: str, args: dict[str, Any]) -> bool:
-        """A call that would clear a safety question or confirm a gate."""
+    def _moves_on(name: str, args: dict[str, Any]) -> bool:
+        """A call that advances the repair. Reporting danger never counts."""
         if name == "safety_check":
             return not args.get("danger_reported", False)
-        return name == "confirm_gate" and bool(args.get("confirmed", True))
+        return name in ADVANCING
+
+    def _is_restatement(self, call: ToolCall, card: dict[str, Any]) -> bool:
+        """Asking identify_appliance again after "yes" says the same thing, it asks nothing new,
+        so it must not stop find_manual from following in that turn."""
+        return (
+            call.name == "identify_appliance"
+            and self.state == "MANUAL"
+            and call.state == "MANUAL"
+            and (self.card or {}).get("appliance_id") == card.get("appliance_id")
+        )
+
+    @staticmethod
+    def _asks_the_user(name: str, card: dict[str, Any]) -> bool:
+        kind = card.get("type")
+        gate = card.get("gate")
+        if kind == "step":
+            # A fresh step is a task. Confirming a gate is only an answer, unless it was a
+            # "before" gate: then the step has just been revealed and the user has yet to do it.
+            if name != "confirm_gate":
+                return True
+            return bool(gate and (not gate.get("confirmed") or gate.get("kind") == "before"))
+        if kind == "appliance_list":
+            return name in ("identify_appliance", "safety_check")
+        if kind == "ask_code":  # quick_checks(false) only hands over to diagnose
+            return name == "diagnose"
+        return kind in ASKING_CARDS
 
     def _before_tool(self, event: BeforeToolCallEvent) -> None:
         use = event.tool_use
@@ -124,12 +160,10 @@ class KiltaAgent:
                 args["session_id"] = self.session_id
             else:
                 del args["session_id"]  # none yet: the server uses the newest
-        # Host policy: a turn may not both ask the user something and answer it. Models do
-        # this ("No, there's no burning") when the user's message already describes the problem.
-        # Reporting danger is always allowed.
-        if self._asked_this_turn and self._answers_for_the_user(
-            use["name"], use.get("input") or {}
-        ):
+        # Host policy: once a turn has asked the user something, it may not go on to answer it
+        # or skip ahead. Models do ("No, there's no burning"; confirm, identify, diagnose and
+        # start the steps in one go) when the user's message already says a lot.
+        if self._asked_this_turn and self._moves_on(use["name"], use.get("input") or {}):
             event.cancel_tool = NOT_YET
             self._cancelled.add(use["toolUseId"])
 
@@ -162,10 +196,9 @@ class KiltaAgent:
         self._calls.append(call)
         card = structured.get("card")
         if isinstance(card, dict):
-            self.card = card
-            gate = card.get("gate")
-            if card.get("type") in QUESTION_CARDS or (gate and not gate.get("confirmed")):
+            if self._asks_the_user(call.name, card) and not self._is_restatement(call, card):
                 self._asked_this_turn = True
+            self.card = card
         if call.state:
             self.state = call.state
         if call.session_id:
@@ -208,6 +241,14 @@ class KiltaAgent:
             if blocks:
                 kept.append({**message, "content": blocks})
         self.agent.messages[start:] = kept
+
+    def _truthful_speech(self, speech: str) -> str:
+        """If the engine refused to record "fixed", the user must hear the engine's question, not
+        a celebration. A model has answered "great job!" right after that refusal."""
+        last = self._calls[-1] if self._calls else None
+        if last and last.reason == "verify_first" and last.say:
+            return last.say
+        return speech
 
     def _safety_speech(self, speech: str, language: str) -> str:
         """A safety stop is spoken by the engine, whatever the model said. Small models have
@@ -274,6 +315,7 @@ class KiltaAgent:
             speech = spoken[0] if spoken and not error else BUSY_SPEECH
         self._scrub_cancelled(len(snapshot))
         speech = self._safety_speech(speech, language)
+        speech = self._truthful_speech(speech)
         response = TurnResponse(
             speech=speech,
             card=self.card if self._calls else None,

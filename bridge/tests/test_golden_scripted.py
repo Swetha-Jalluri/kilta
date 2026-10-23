@@ -9,21 +9,21 @@ import pytest
 from kilta_bridge.chain import Link
 
 from .fakes import ScriptedModel
-from .scenarios import SCENARIO_A, SCENARIO_B, SCENARIO_C, plans, verify
+from .scenarios import SCENARIO_A, SCENARIO_B, SCENARIO_C, expand_scripted, plans, play
 
 
 @pytest.mark.parametrize("name, turns", [("A", SCENARIO_A), ("B", SCENARIO_B), ("C", SCENARIO_C)])
 def test_golden_scenario(name, turns, start_bridge):
+    turns = expand_scripted(turns)
     bridge = start_bridge([Link("scripted", ScriptedModel(plans(turns)))])
-    for turn in turns:
-        resp = bridge.turn(turn.text, turn.member, turn.language)
-        verify(resp, turn)
+    play(bridge, turns, live=False)
 
 
 def test_scenario_a_tool_order_matches_the_demo_script(start_bridge):
-    bridge = start_bridge([Link("scripted", ScriptedModel(plans(SCENARIO_A)))])
+    turns = expand_scripted(SCENARIO_A)
+    bridge = start_bridge([Link("scripted", ScriptedModel(plans(turns)))])
     seen = []
-    for turn in SCENARIO_A:
+    for turn in turns:
         resp = bridge.turn(turn.text, turn.member, turn.language)
         seen.extend(c["name"] for c in resp["tool_calls"])
     assert seen[:10] == [

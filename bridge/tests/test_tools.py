@@ -93,7 +93,7 @@ PROMPT = build_system_prompt(REPO_ROOT / "docs")
     "Never answer for the user",
     "danger_reported is true only when",
     "sí, huele a quemado",
-    "Call confirm_gate only when the user clearly confirmed",
+    "do NOT confirm a gate",
     "do not work around it",
     "text is withheld",
     "Technician work is never guided",
