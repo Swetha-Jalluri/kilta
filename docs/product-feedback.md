@@ -32,10 +32,10 @@ Versions: `mcp` 1.30.0 (pinned `>=1.27,<2`), spec 2025-11-25, Streamable HTTP on
 
 ## Alexa+ MCP Toolkit docs and Private Preview
 
-1. **What we used it for.** The documentation shaped the server: Streamable HTTP, spec 2025-11-25, a remotely reachable URL, tools whose descriptions the host can route from, and `content` that works when spoken. We requested Private Preview access.
+1. **What we used it for.** The documentation shaped the server: Streamable HTTP, spec 2025-11-25, a remotely reachable URL, tools whose descriptions the host can route from, and `content` that works when spoken. We did not request Private Preview access during the hackathon (see 4), so we never ran Kilta on a real Alexa+ host.
 2. **What worked well.** The requirements were clear enough to build against without access, and an ordinary MCP SDK server needed no Alexa-specific code.
-3. **What needs work.** Preview approval gates all real testing, so the end-to-end path (a real Alexa+ device calling Kilta) could not be tried. A hosted MCP test console, or a documented simulator of the host's tool-calling behaviour, would let developers test the part that matters most. MCP has no way for a server to know which words the user actually said; hosts are where that belongs, and the docs do not say what they guarantee.
-4. **Onboarding.** [TO BE COMPLETED BY THE TEAM: Private Preview request date and status at submission.]
+3. **What needs work.** Preview approval gates all real testing for a short project like ours, so the end-to-end path (a real Alexa+ device calling Kilta) could not be tried. A hosted MCP test console, or a documented simulator of the host's tool-calling behaviour, would let developers test the part that matters most. MCP has no way for a server to know which words the user actually said; hosts are where that belongs, and the docs do not say what they guarantee.
+4. **Onboarding.** We read the documentation and built to it, but we did not request Private Preview access. The preview requires approval, which was not practical in a short build window, so we built a simulated Alexa+ host (a Strands agent behind a small API, plus a web simulator) that calls the same MCP server a real host would call. Nothing in the server is specific to the simulator.
 5. **Would we build for it again?** Yes. The server is unchanged for a real host; only access is missing.
 
 ## Agent Skills (agentskills.io)
@@ -123,6 +123,23 @@ Ollama 0.40.9 with `qwen3:8b` (5.2 GB), on a 16 GB Apple M4 Mac, through Strands
 3. **What needs work.** `getVoices()` can be empty until the `voiceschanged` event. Recognition needs Chrome, the microphone permission and (in Chrome) a network connection, and it cannot be exercised in headless tests, so we test the text path and stub the voices. `SpeechSynthesisUtterance.voice` throws if given anything but a real voice object, which broke our first stub. There is no reliable "is it listening" signal across browsers.
 4. **Onboarding.** An hour including the Spanish voice choice.
 5. **Would we build with it again?** Yes for a demo, with a text box always on screen.
+
+## Dev tooling: Playwright, Vite, React, Tailwind CSS, Motion
+
+Versions: `@playwright/test` 1.64, Vite 8.3, React 19.3, TypeScript 7.0, Tailwind CSS 4.3, Motion 14.6.
+
+1. **What we used it for.** The simulator web app (`web/`) and its browser tests. Playwright types the three golden scenarios into the app against a scripted fake model, checks the engine state and tool log on screen, and screenshots every card at 1280x720 and 1920x1080.
+2. **What worked well.**
+   - Vite 8 and TypeScript 7 worked on the first try (`tsc --noEmit` plus a 0.6 s build), so nothing needed pinning. React 19 had no surprises.
+   - Tailwind 4's CSS-first setup (`@theme` tokens and `@custom-variant dark`) made light and dark mode a few lines.
+   - Motion's `AnimatePresence` gave simple card transitions in a few lines.
+   - Playwright's `webServer` list starts the fake-model bridge and Vite together, and `addInitScript` let us stub the speech voices to test the es-ES choice.
+3. **What needs work.**
+   - Playwright 1.64 wanted a newer browser than the one cached from an earlier install; `npx playwright install chromium --only-shell` fixed it, but the failure message is long for a one-line fix.
+   - A fade-out/fade-in card transition made early screenshots catch half-faded cards; we wait 650 ms after each turn. A Playwright option to wait for CSS animations to finish would help.
+   - Headless Chromium cannot exercise real speech recognition, so that path stays a manual check.
+4. **Onboarding.** Under an hour for the app shell and the first passing browser test.
+5. **Would we build with it again?** Yes. It is a light stack, and the browser test was cheap to keep running on a laptop (one worker, headless).
 
 ## Feature requests (optional)
 Format: description, why it matters to Kilta, priority (Critical / Important / Nice-to-have)

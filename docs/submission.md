@@ -94,7 +94,8 @@ nicely, and a tool-calling agent needs a host that knows when the user has actua
 a user turn; a real host (Alexa+) is where that belongs, and we would like the protocol to say so.
 
 ## Limits (we would rather say so)
-- Not tested on a real Alexa+ device: our simulator plays Alexa+'s role. The same server is unchanged for it.
+- Not tested on a real Alexa+ device. We did not request Private Preview access (it needs approval, which was not
+  practical in a short build window), so our simulator plays Alexa+'s role. The server is unchanged for a real host.
 - The repair-step MCP App (`ui://`) and an explainer animation were planned and not built.
 - Orders, warranty, parts cart and insights are simulated with fictional data. Nothing is bought or sent.
 - Speech recognition needs Chrome; the text box always works. The last live re-run of the golden scenarios on a

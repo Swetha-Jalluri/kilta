@@ -14,11 +14,11 @@ Format per entry (required by the hackathon for the bonus):
 ### F1: Alexa+ MCP Toolkit requires Private Preview approval
 - Tool/API: Alexa+ MCP Toolkit, Alexa AI CLI
 - Task attempted: Connect the Kilta MCP server to real Alexa+ during the hackathon.
-- Steps taken: Read the MCP Toolkit overview and quickstart; requested Private Preview access.
+- Steps taken: Read the MCP Toolkit overview and quickstart. We did not request Private Preview access.
 - Expected: Hackathon participants could test their MCP server on Alexa+ (or a public simulator).
-- Actual: (fill in: approval status by deadline)
+- Actual: Access requires Private Preview approval, which was not practical to wait for in a short build window, so we never ran Kilta on a real Alexa+ host.
 - Severity: High
-- Workaround: Built a simulated Alexa+ host (Strands agent + web simulator) that uses the same MCP server unchanged.
+- Workaround: Built a simulated Alexa+ host (a Strands agent behind a small API, plus a web simulator) that uses the same MCP server unchanged.
 - Actionable suggestion: Give hackathon registrants fast-track preview access or a hosted Alexa+ MCP test console.
 
 ### F2: `uv run` warns about VIRTUAL_ENV mismatch when pyenv or conda is active
