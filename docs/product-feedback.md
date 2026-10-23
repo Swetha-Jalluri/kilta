@@ -21,9 +21,31 @@ Versions: `mcp` 1.30.0 (pinned `>=1.27,<2`), spec 2025-11-25, Streamable HTTP on
 4. **Onboarding (zero to hello world).** Quick, about 20 minutes to a working server with tests, mostly reading the SDK source and type signatures (`inspect.signature(FastMCP.__init__)`) to confirm the v1 API and options, because the docs and blog posts cover several protocol revisions and the v2 line. A page "the v1 line, spec 2025-11-25, Streamable HTTP" would have saved that.
 5. **Would we build with it again?** Yes. The v1 SDK matched the required spec exactly, left the engine in plain Python, and was easy to test end to end. The doc gaps above are the main cost.
 ## MCP Inspector
-## MCP Apps extension (@modelcontextprotocol/ext-apps)
+
+`npx @modelcontextprotocol/inspector` in CLI mode.
+
+1. **What we used it for.** The Phase 1 check Amazon recommends: start the server, list its tools (`--method tools/list`) and call one (`--method tools/call --tool-name start_repair --tool-arg ...`) over Streamable HTTP, and confirm `GET /sse` is not served.
+2. **What worked well.** CLI mode prints plain JSON, so the result is easy to paste as evidence: 24 tools listed, and a `start_repair` call returned both `content` and `structuredContent`.
+3. **What needs work.** The CLI does not show the negotiated protocol version, so we assert `2025-11-25` in our own client tests. The `--transport http` flag name is easy to miss. We used only the CLI, not the browser UI.
+4. **Onboarding.** Two minutes with `npx -y`.
+5. **Would we use it again?** Yes, as a smoke test in the build loop.
+
 ## Alexa+ MCP Toolkit docs and Private Preview
+
+1. **What we used it for.** The documentation shaped the server: Streamable HTTP, spec 2025-11-25, a remotely reachable URL, tools whose descriptions the host can route from, and `content` that works when spoken. We requested Private Preview access.
+2. **What worked well.** The requirements were clear enough to build against without access, and an ordinary MCP SDK server needed no Alexa-specific code.
+3. **What needs work.** Preview approval gates all real testing, so the end-to-end path (a real Alexa+ device calling Kilta) could not be tried. A hosted MCP test console, or a documented simulator of the host's tool-calling behaviour, would let developers test the part that matters most. MCP has no way for a server to know which words the user actually said; hosts are where that belongs, and the docs do not say what they guarantee.
+4. **Onboarding.** [TO BE COMPLETED BY THE TEAM: Private Preview request date and status at submission.]
+5. **Would we build for it again?** Yes. The server is unchanged for a real host; only access is missing.
+
 ## Agent Skills (agentskills.io)
+
+1. **What we used it for.** `skill/kilta/SKILL.md` teaches any agent when to use Kilta, the tool order, the safety rules and the voice rules, with a per-state tool reference in `references/`.
+2. **What worked well.** The format is small and clear: required `name` and `description`, optional fields, a body in plain Markdown, and optional folders for progressive disclosure. The rule that the name must match the directory caught a typo early.
+3. **What needs work.** We found no official validator to run, so we wrote our own test (`server/tests/test_skill.py`): frontmatter limits per the specification, and every tool the skill names must exist on the server. We also have not run the skill inside an agent host, so we cannot say how well a host follows it.
+4. **Onboarding.** About ten minutes from the specification page to a valid skill.
+5. **Would we build with it again?** Yes. It is the cheapest way to hand an agent the rules of a domain.
+
 ## AWS: Strands Agents SDK (AWS Builder mini challenge: describe exactly how Strands is used)
 
 Version: `strands-agents` 1.62.0 with the `gemini`, `openai` and `ollama` extras. Strands is the AWS-originated, open-source agent SDK, which the hackathon rules name as qualifying for the AWS Builder challenge. It runs locally inside the bridge. No hosted AWS service (Bedrock, AgentCore, S3) is called and no AWS account is needed, so the project has no AWS bill.
@@ -96,5 +118,16 @@ Ollama 0.40.9 with `qwen3:8b` (5.2 GB), on a 16 GB Apple M4 Mac, through Strands
 
 ## Web Speech API (Chrome)
 
+1. **What we used it for.** Push-to-talk speech recognition (language follows the selected person: en-US or es-ES) and spoken replies with `speechSynthesis`, picking an es-ES voice for Spanish, then es-MX, then any Spanish voice.
+2. **What worked well.** No keys, no install, and voices in many languages. Voice selection is a few lines of code and a browser test with stubbed voices proves the es-ES choice.
+3. **What needs work.** `getVoices()` can be empty until the `voiceschanged` event. Recognition needs Chrome, the microphone permission and (in Chrome) a network connection, and it cannot be exercised in headless tests, so we test the text path and stub the voices. `SpeechSynthesisUtterance.voice` throws if given anything but a real voice object, which broke our first stub. There is no reliable "is it listening" signal across browsers.
+4. **Onboarding.** An hour including the Spanish voice choice.
+5. **Would we build with it again?** Yes for a demo, with a text box always on screen.
+
 ## Feature requests (optional)
 Format: description, why it matters to Kilta, priority (Critical / Important / Nice-to-have)
+
+1. **MCP: tell the server which text came from the user.** A request field (or a turn identifier) that marks user-spoken text versus model-generated arguments. Kilta's safety answers and gate confirmations must come from the user, and a server cannot tell today whether a model answered "no, nothing is burning" itself. We had to enforce this in our host. Priority: Critical.
+2. **Gemini API: publish the free-tier limits per model.** Requests per day and tokens per minute in the public rate-limits table (we found 20 a day for 3.x Flash only in an error message). Priority: Important.
+3. **Strands Agents: provider failover and per-call tool selection as built-in options.** Both needed small custom code in our chain. Also raise provider errors before the first `messageStart`. Priority: Important.
+4. **Alexa+: a hosted MCP test console for developers without Private Preview.** Priority: Nice-to-have.

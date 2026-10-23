@@ -166,6 +166,9 @@ The repair engine is a **deterministic state machine** inside the MCP server. It
 | `kilta://manuals/{manual_id}` | Manual text as a readable resource |
 | Prompt `start-repair` | A ready-made entry prompt for hosts that support prompts |
 
+> **Status as built (2026-10-23):** the `ui://kilta/step-card.html` MCP App and the explainer animation were
+> not built. Everything else in this section exists, plus `resume_repair`.
+
 ### Tool result contract
 
 Every tool returns three things: a short `content` text that works when spoken aloud, `structuredContent` with the card data, and (for step tools) `_meta.ui.resourceUri` pointing to the MCP App. Our simulator renders `structuredContent` natively, while a real Alexa+ host could render the MCP App.

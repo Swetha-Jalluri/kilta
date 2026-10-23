@@ -21,17 +21,17 @@ submission. Needs contribution URL, repo URL, GitHub username, and what/how/why 
 Kilta idea: publish the Alexa+ simulator as a separate reusable MIT repo.
 
 ## Submission checklist
-- [ ] Text description of features and functionality (docs/submission.md)
-- [ ] Public GitHub repo with open source license visible in the About section (MIT)
+- [x] Text description of features and functionality (docs/submission.md)
+- [x] Public GitHub repo with open source license visible in the About section (MIT)
 - [ ] Repo has all source, assets, and clear setup and run instructions (one command: `make dev`)
 - [ ] Demo video under 3 minutes, public on YouTube or Vimeo, English, shows the project working
 - [ ] No third-party trademarks, copyrighted music, or copyrighted footage in the video
-- [ ] Product feedback for EACH tool/API/SDK used: what for, what worked, what needs work, onboarding, build again yes/no and why (docs/product-feedback.md)
-- [ ] AWS services described inside the product feedback answer
-- [ ] Track: Alexa+. Mini challenges: AWS Builder (+ Open Source if done)
-- [ ] Optional feature requests: description, why it matters, priority (Critical / Important / Nice-to-have)
+- [x] Product feedback for EACH tool/API/SDK used: what for, what worked, what needs work, onboarding, build again yes/no and why (docs/product-feedback.md)
+- [x] AWS services described inside the product feedback answer
+- [x] Track: Alexa+. Mini challenges: AWS Builder (+ Open Source if done)
+- [x] Optional feature requests: description, why it matters, priority (Critical / Important / Nice-to-have)
 - [ ] Optional friction log entries: task, steps, expected vs actual, severity, workaround, suggestion (up to 10% bonus)
-- [ ] Third-party APIs used within their terms
+- [x] Third-party APIs used within their terms
 
 ## Judging (equal weight)
 1. Tech implementation: how well built, how well it uses the required tech (tie-breaker: this one first)
