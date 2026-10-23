@@ -11,3 +11,6 @@ data/sessions/
 playwright-report/
 test-results/
 data/state/
+web/tests/.generated/
+web/test-results/
+web/playwright-report/

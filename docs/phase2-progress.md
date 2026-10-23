@@ -38,3 +38,14 @@ Live evidence: `docs/phase2-live-evidence.md`.
 2. Scenario A on Ollama was never completed; B stalls around turn 4 (qwen3:8b is weak at the flow).
 3. `quick_checks(setting_fixed=true)` still records "fixed" from a model boolean, without a verify question.
 4. Web UI (Phase 3) must send `X-Kilta-Demo: 1` on reset and should not rely on `step_id` while a step is withheld.
+
+## Phase 3 (web) and the Agent Skill: done
+- `web/`: Vite 8, React 19, TypeScript 7, Tailwind 4, Motion 14, Lucide. Title screen, smart-display frame
+  with a glowing ring (listening, thinking, speaking), transcript strip, push-to-talk and speech output
+  (Spanish uses an es-ES voice, then es-MX), text box (Enter sends), Priya/Lucia and EN/ES controls, light and
+  dark mode, a card for every card type, a behind-the-scenes panel from `/api/events`, Demo reset.
+- `make dev` starts all three processes; `make test-e2e` runs Playwright (Chromium, one worker) against
+  `bridge/scripts/serve_scripted.py`, which replays scenarios A, B, C with a fake model. Screenshots at 1280x720
+  (light) and 1920x1080 (dark) are written to `web/test-results/screens/`.
+- `skill/kilta/SKILL.md` follows the agentskills.io format; `server/tests/test_skill.py` checks the frontmatter
+  and that every tool it names exists.

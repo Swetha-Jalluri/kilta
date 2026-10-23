@@ -1,0 +1,30 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --color-clay-50: #fdf8f1;
+  --color-clay-100: #f8ecdb;
+  --color-clay-200: #efd6b4;
+  --color-clay-500: #c2671f;
+  --color-clay-600: #a8531a;
+  --color-clay-700: #86411a;
+  --color-ink-900: #1f1a16;
+  --color-ink-800: #2a231d;
+  --color-ink-700: #3a3027;
+  --color-ink-500: #7b6c5c;
+  --color-sage: #3f8f78;
+  --color-alert: #c0392b;
+}
+
+html, body, #root { height: 100%; }
+body { margin: 0; background: #e9dfd0; }
+html.dark body { background: #0f0c0a; }
+
+@keyframes ring-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--ring), 0 0 18px 2px var(--ring); transform: scale(1); }
+  50% { box-shadow: 0 0 0 8px transparent, 0 0 34px 8px var(--ring); transform: scale(1.06); }
+}
+.ring-live { animation: ring-pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .ring-live { animation: none; } }

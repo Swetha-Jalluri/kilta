@@ -56,6 +56,10 @@ class ScriptedModel(_BaseFake):
         self.seen_tools: list[list[str]] = []  # tool names offered on each model call
         self.model_calls = 0
 
+    def plan_for(self, turn: int, user_prompts: list[str]) -> Plan:
+        """The plan for the `turn`-th user message (1-based)."""
+        return self.plans[turn - 1]
+
     async def stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
         user_idx = [i for i, m in enumerate(messages) if is_user_text(m)]
         self.seen_prompts = [
@@ -63,7 +67,7 @@ class ScriptedModel(_BaseFake):
         ]
         self.seen_tools.append([t["name"] for t in tool_specs or []])
         turn = len(user_idx)
-        plan = self.plans[turn - 1]
+        plan = self.plan_for(turn, self.seen_prompts)
         done = sum(
             1
             for m in messages[user_idx[-1] + 1 :]

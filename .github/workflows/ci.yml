@@ -17,6 +17,12 @@ jobs:
       - name: Install server dependencies from uv.lock
         run: uv sync --frozen
         working-directory: server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install web dependencies from package-lock.json
+        run: npm ci
+        working-directory: web
       - name: Install bridge dependencies from uv.lock
         run: uv sync --frozen
         working-directory: bridge
