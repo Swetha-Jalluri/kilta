@@ -57,7 +57,7 @@ Models used: `gemini-3.5-flash-lite` (primary) and `gemini-3.5-flash` (fallback)
    - Spanish worked with no extra prompting.
    - The error text of a spent quota says which model, which limit and how long to wait ("limit: 20 ... Please retry in 8h56m"), which let us skip a dead model instead of retrying it.
 3. **What needs work.**
-   - **The free tier cannot carry a conversation.** `gemini-3.5-flash` resolves to `gemini-3.6-flash`, whose free limit is **20 requests per day**. One Kilta turn makes 2 to 4 model calls, so a single scenario exhausts it. The limits are only visible in the dashboard, not in the documentation.
+   - **The free tier is thin for a conversation.** `gemini-3.5-flash` resolves to `gemini-3.6-flash`, whose free limit is **20 requests per day**. One Kilta turn makes 2 to 4 model calls, so a single scenario exhausts it. `gemini-3.5-flash-lite` allows **500 requests per day**, which was enough for several full runs of our three golden scenarios (about 8 s per turn, one transient 429) before it ran out too, with "Please retry in 1h22m". The limits are only visible in the error text and the dashboard, not in the rate-limit documentation.
    - The `gemini-flash-latest` alias hung for 40 s or returned 503 "high demand" on 2026-10-21, and `gemini-2.5-*` returned 404 for a new key. Pinned model IDs were the only stable option.
    - `count_tokens` on the Developer API rejects `system_instruction` and `tools`, so the real prompt size could not be measured with Gemini.
    - Once, a conversation containing tool calls made by another provider was rejected with "Function call is missing a thought_signature" on the overloaded alias. We could not reproduce it on the pinned models.
