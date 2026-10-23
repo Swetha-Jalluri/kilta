@@ -22,6 +22,7 @@ class ToolCall(BaseModel):
     state: str | None = None
     session_id: str | None = None
     say: str | None = None
+    card_type: str | None = None
     ms: int = 0
     error: str | None = None
 

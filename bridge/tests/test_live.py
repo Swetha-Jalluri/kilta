@@ -74,6 +74,9 @@ def run_turns(bridge, turns, started: float | None = None) -> list[dict]:
             f"  {number:>2}. [{resp['model']}] {resp['elapsed_ms'] / 1000:5.1f}s "
             f"{(resp['state'] or NO_STATE):<14} {names}"
         )
+        for call in resp["tool_calls"]:
+            flag = "" if call["ok"] else f" [{call['reason'] or call['error']}]"
+            print(f"      - {call['name']}({call['arguments']}){flag}")
         print(f"      user : {turn.text}")
         print(f"      kilta: {resp['speech']}")
         verify(resp, turn)

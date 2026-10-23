@@ -148,6 +148,7 @@ class KiltaAgent:
             state=structured.get("state"),
             session_id=structured.get("session_id"),
             say=_text({"content": result.get("content", [])}) or None,
+            card_type=(structured.get("card") or {}).get("type"),
             ms=int((time.monotonic() - started) * 1000),
             error=error,
         )
@@ -183,6 +184,15 @@ class KiltaAgent:
             f"[context: speaker={who}; language={language}; confidence={confidence}; "
             f"pace={pace}; active_session={session}]"
         )
+
+    def _safety_speech(self, speech: str, language: str) -> str:
+        """A safety stop is spoken by the engine, whatever the model said. Small models have
+        answered a stop with "can you tell me more?". In another language the model's own words
+        come first and the engine's English instructions follow, so nothing is left out."""
+        stops = [c.say for c in self._calls if c.card_type == "safety_stop" and c.say]
+        if not stops:
+            return speech
+        return stops[-1] if language.startswith("en") else f"{speech} {stops[-1]}".strip()
 
     async def turn(self, request: TurnRequest) -> TurnResponse:
         async with self.lock:
@@ -231,6 +241,7 @@ class KiltaAgent:
         if not speech:
             spoken = [c.say for c in reversed(self._calls) if c.ok and c.say]
             speech = spoken[0] if spoken and not error else BUSY_SPEECH
+        speech = self._safety_speech(speech, language)
         response = TurnResponse(
             speech=speech,
             card=self.card if self._calls else None,

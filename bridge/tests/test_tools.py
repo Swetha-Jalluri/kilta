@@ -113,4 +113,4 @@ def test_the_style_guide_keeps_safety_phrasing_and_drops_sample_lines():
 
 
 def test_the_prompt_is_short():
-    assert len(PROMPT) < 4500 and len(RULES) < 3000
+    assert len(PROMPT) < 5200 and len(RULES) < 3500

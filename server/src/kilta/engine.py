@@ -460,6 +460,19 @@ class Engine:
         self._save(s, "fixed")
         return self._fixed(s)
 
+    def _appliance_named_in(self, description: str) -> str | None:
+        """The appliance the user named, if they named exactly one."""
+        said = description.lower()
+        named = [
+            a.id
+            for a in self.store.appliances()
+            if any(
+                re.search(rf"\b{re.escape(word)}\b", said)
+                for word in [a.type, *(k for k, v in TYPE_ALIASES.items() if v == a.type)]
+            )
+        ]
+        return named[0] if len(named) == 1 else None
+
     def _danger_words(self, text: str) -> list[str]:
         keywords = set(self.store.safety["danger_keywords"])
         found = [w for w in re.findall(r"[a-z]+", text.lower()) if w in keywords]
@@ -512,9 +525,11 @@ class Engine:
             )
         prior_stop = self._prior_stop_for(description)
         s = self.store.new_session(member_id.lower() if member_id else None, description)
-        if prior_stop:
-            s.prior_stop = prior_stop
-            self._save(s, f"carried safety stop from {prior_stop['session_id']}")
+        s.appliance_hint = self._appliance_named_in(description)
+        s.prior_stop = prior_stop
+        self._save(
+            s, f"carried safety stop from {prior_stop['session_id']}" if prior_stop else None
+        )
         if self._danger_in(description):
             return self._enter_recheck(s, description)
         return self._safety_question(s)
@@ -541,9 +556,17 @@ class Engine:
             s.safety_notes = details
             s.state = State.IDENTIFY
             self._save(s, "safety cleared")
-            say = "Good, thank you. " + self._ask_appliance(s).say
-            return self._out(s, say, self._ask_appliance(s).card)
+            return self._after_safety_clear(s)
         return self.present(s)
+
+    def _after_safety_clear(self, s: Session) -> Outcome:
+        """Ask which appliance, unless the user already named it: then confirm that one."""
+        named = self.store.appliance(s.appliance_hint) if s.appliance_hint else None
+        if named:
+            out = self._identified(s, named)
+            return out.model_copy(update={"say": "Good, thank you. " + out.say})
+        out = self._ask_appliance(s)
+        return out.model_copy(update={"say": "Good, thank you. " + out.say})
 
     def _leave_recheck(self, s: Session, details: str) -> Outcome:
         previous = s.recheck_from or State.SAFETY_CHECK
@@ -552,9 +575,7 @@ class Engine:
         if previous == State.SAFETY_CHECK:
             s.safety_cleared, s.safety_notes, s.state = True, details, State.IDENTIFY
             self._save(s, "safety cleared after recheck")
-            return self._out(
-                s, "Good, thank you. " + self._ask_appliance(s).say, self._ask_appliance(s).card
-            )
+            return self._after_safety_clear(s)
         s.state = previous
         self._save(s, "safety recheck cleared")
         out = self.present(s)
@@ -574,6 +595,8 @@ class Engine:
             return err  # type: ignore[return-value]
         if refusal := self._guard(s, {State.IDENTIFY, State.MANUAL}):
             return refusal
+        if s.appliance_id and not (appliance_id or model_code or appliance_type):
+            return self.present(s)  # already identified: asking again must not undo that
         found = self._match_appliances(appliance_id, model_code, appliance_type)
         if len(found) != 1:
             ask = self._ask_appliance(s)
@@ -585,7 +608,9 @@ class Engine:
                     }
                 )
             return ask
-        a = found[0]
+        return self._identified(s, found[0])
+
+    def _identified(self, s: Session, a: Appliance) -> Outcome:
         s.appliance_id, s.manual_id, s.state = a.id, a.manual_id, State.MANUAL
         self._save(s, f"identified {a.id}")
         say = (
@@ -607,12 +632,17 @@ class Engine:
     def _match_appliances(
         self, appliance_id: str | None, model_code: str | None, appliance_type: str | None
     ) -> list[Appliance]:
+        """Try each identifier in turn and use the first that finds something. A model may pass
+        a wrong id next to a right model code, and the right one should still win."""
         appliances = self.store.appliances()
         if appliance_id:
-            return [a for a in appliances if a.id == appliance_id]
+            wanted = appliance_id.lower().strip()
+            found = [a for a in appliances if wanted in (a.id, a.manual_id)]
+            if found:
+                return found
         if model_code:
             wanted = normalize_code(model_code)
-            return [
+            found = [
                 a
                 for a in appliances
                 if wanted
@@ -621,6 +651,8 @@ class Engine:
                     or normalize_code(a.model_code).startswith(wanted)
                 )
             ]
+            if found:
+                return found
         if appliance_type:
             kind = TYPE_ALIASES.get(appliance_type.lower().strip(), appliance_type.lower().strip())
             return [a for a in appliances if a.type == kind]
@@ -656,15 +688,19 @@ class Engine:
             return refusal
         manual = self._manual(s)
         assert manual
+        title = manual.title.removesuffix(" (fictional)")
+        if s.state == State.QUICK_CHECKS:
+            # The quick checks come with the manual, so nothing has to be improvised between the
+            # two calls, and the checks always come from the manual.
+            checks = self._quick_checks_card(s)
+            card = {**checks.card, "manual": self.services.manual_card(manual)}
+            return checks.model_copy(
+                update={"say": f"Found the {title}. {checks.say}", "card": card}
+            )
         sticker = manual.model_sticker
         say = (
-            f"Found it: the {manual.title.removesuffix(' (fictional)')}. "
-            f"The model sticker is on page {sticker.page}: {sticker.location.lower()}"
+            f"The {title}. The model sticker is on page {sticker.page}: {sticker.location.lower()}"
         )
-        if s.state == State.QUICK_CHECKS:
-            say += (
-                f" Let's start with the quick checks on page {manual.quick_checks[0].source.page}."
-            )
         return self._out(s, say, self.services.manual_card(manual))
 
     def quick_checks(

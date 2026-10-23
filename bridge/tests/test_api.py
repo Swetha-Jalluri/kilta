@@ -320,3 +320,30 @@ def test_each_model_call_sees_only_the_tools_for_the_current_state(start_bridge)
     assert set(model.seen_tools[2]) == set(after_start)
     assert {"identify_appliance", "lookup_orders"} <= set(model.seen_tools[3])
     assert "next_step" not in model.seen_tools[3]
+
+
+def test_a_safety_stop_is_spoken_by_the_engine_not_the_model(start_bridge):
+    plan = Plan(
+        [
+            ("start_repair", {"description": "I smell burning"}),
+            ("safety_check", {"danger_reported": True, "details": "I smell burning"}),
+        ],
+        say="Can you tell me more about the issue?",  # a small model ignoring the stop
+    )
+    resp = start_bridge([Link("scripted", scripted(plan))]).turn("I smell burning")
+    assert resp["state"] == "STOPPED"
+    assert resp["speech"].startswith("I'm stopping here, because safety comes first.")
+    assert "emergency number" in resp["speech"] and "tell me more" not in resp["speech"]
+
+
+def test_in_another_language_the_models_words_come_first_then_the_engines(start_bridge):
+    plan = Plan(
+        [
+            ("start_repair", {"description": "huele a quemado"}),
+            ("safety_check", {"danger_reported": True, "details": "huele a quemado"}),
+        ],
+        say="Por favor, aléjese del aparato.",
+    )
+    resp = start_bridge([Link("scripted", scripted(plan))]).turn("Huele a quemado", "lucia")
+    assert resp["speech"].startswith("Por favor, aléjese del aparato.")
+    assert "emergency number" in resp["speech"]

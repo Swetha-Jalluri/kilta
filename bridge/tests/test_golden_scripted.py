@@ -26,13 +26,12 @@ def test_scenario_a_tool_order_matches_the_demo_script(start_bridge):
     for turn in SCENARIO_A:
         resp = bridge.turn(turn.text, turn.member, turn.language)
         seen.extend(c["name"] for c in resp["tool_calls"])
-    assert seen[:11] == [
+    assert seen[:10] == [
         "get_household",
         "start_repair",
         "safety_check",
         "identify_appliance",
         "find_manual",
-        "quick_checks",
         "diagnose",
         "next_step",
         "next_step",

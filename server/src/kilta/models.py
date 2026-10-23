@@ -237,6 +237,8 @@ class Session(BaseModel):
 
     appliance_id: str | None = None
     manual_id: str | None = None
+    # An appliance the user named when they described the problem ("my washer says E31").
+    appliance_hint: str | None = None
     quick_checks_shown: bool = False
     error_code: str | None = None
     symptoms: str = ""

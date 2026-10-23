@@ -293,7 +293,7 @@ def build_chain(
         model = OllamaModel(
             settings.ollama_host,
             model_id=settings.ollama_model,
-            temperature=0.3,
+            temperature=0.1,  # steadier tool calls from a small local model
             max_tokens=600,
             keep_alive="30m",
             # Ollama's default context (4k tokens) would silently cut off the prompt and tools.

@@ -86,7 +86,8 @@ def test_only_an_explicit_true_answer_stops_after_a_recheck(engine):
 def test_an_explicit_false_answer_clears_the_recheck_even_with_danger_words(engine):
     sid = engine.start_repair("priya", "my dishwasher smells like burning plastic").session.id
     out = engine.safety_check(sid, danger_reported=False, details="no, I don't smell any burning")
-    assert out.session.state == State.IDENTIFY and out.session.safety_cleared
+    # the dishwasher was named in the description, so it is confirmed straight away
+    assert out.session.state == State.MANUAL and out.session.safety_cleared
     assert not out.refused and out.session.recheck_from is None
 
 
@@ -139,11 +140,23 @@ def test_stopped_session_can_give_a_technician_summary_and_landlord_message(engi
 # --- order of the flow --------------------------------------------------------------------
 
 
-def test_diagnose_needs_the_quick_checks_first(engine):
+def test_finding_the_manual_brings_the_quick_checks_with_it(engine):
     sid = engine.start_repair("priya", "beeping").session.id
     engine.safety_check(sid)
     engine.identify_appliance(sid, appliance_type="dishwasher")
-    engine.find_manual(sid)
+    out = engine.find_manual(sid)
+    assert out.session.state == State.QUICK_CHECKS and out.session.quick_checks_shown
+    assert out.card["type"] == "quick_checks" and out.card["page"] == 16
+    assert out.card["manual"]["manual_id"] == "kelvara-dw300"
+    assert "Door" in out.say or "door" in out.say  # the checks themselves are in the reply
+    assert engine.diagnose(sid, error_code="E24").session.state == State.PREPARE
+
+
+def test_diagnose_still_needs_the_quick_checks_to_have_been_shown(engine, store):
+    sid = to_quick_checks(engine)
+    session = store.load_session(sid)
+    session.quick_checks_shown = False  # e.g. a session saved by an older version
+    store.save_session(session)
     out = engine.diagnose(sid, error_code="E24")
     assert out.refused and out.reason == "quick_checks_first"
     assert out.card["type"] == "quick_checks"
@@ -329,7 +342,8 @@ def test_every_state_change_is_written_to_disk(engine, data_dir):
 
 def test_scenario_a_end_to_end(engine):
     sid = engine.start_repair("priya", "My dishwasher is beeping").session.id
-    assert engine.safety_check(sid).session.state == State.IDENTIFY
+    # the dishwasher was named in the first message, so the engine confirms it right away
+    assert engine.safety_check(sid).session.state == State.MANUAL
     assert engine.identify_appliance(sid, appliance_type="dishwasher").session.state == State.MANUAL
     assert engine.find_manual(sid).session.state == State.QUICK_CHECKS
     qc = engine.quick_checks(sid)
@@ -754,7 +768,7 @@ def test_a_new_repair_after_a_stop_carries_the_safety_note(engine, store):
     # Still the normal flow afterwards, and the guard repeats the same question.
     assert "Earlier you reported" in engine.next_step(out.session.id).say
     assert engine.safety_check(out.session.id, danger_reported=False).session.state == (
-        State.IDENTIFY
+        State.MANUAL  # "the dishwasher is beeping" already named the appliance
     )
 
 
@@ -806,3 +820,73 @@ def test_resuming_right_after_a_before_gated_step_asks_its_gate_again(engine):
     assert blocked.card["step_number"] == 7
     engine.confirm_gate(sid)
     assert engine.next_step(sid).card["step_number"] == 8
+
+
+# --- the appliance the user already named ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "description, hint",
+    [
+        ("my washer says E31", "washer"),
+        ("The dishwasher is beeping", "dishwasher"),
+        ("the washing machine will not drain", "washer"),
+        ("both the dishwasher and the washer are acting up", None),
+        ("something is beeping", None),
+    ],
+)
+def test_an_appliance_named_in_the_description_is_remembered(engine, description, hint):
+    assert engine.start_repair("priya", description).session.appliance_hint == hint
+
+
+def test_clearing_the_safety_check_confirms_the_appliance_the_user_named(engine):
+    sid = engine.start_repair("priya", "my washer says E31").session.id
+    out = engine.safety_check(sid, danger_reported=False)
+    assert out.session.state == State.MANUAL and out.session.appliance_id == "washer"
+    assert out.card["type"] == "appliance" and "Kelvara WM-500" in out.say
+    assert out.say.startswith("Good, thank you.") and "Is that the one?" in out.say
+
+
+def test_without_a_named_appliance_the_safety_check_still_asks_which_one(engine):
+    sid = engine.start_repair("priya", "something is beeping").session.id
+    out = engine.safety_check(sid, danger_reported=False)
+    assert out.session.state == State.IDENTIFY and out.card["type"] == "appliance_list"
+
+
+def test_the_named_appliance_also_survives_a_safety_recheck(engine):
+    sid = engine.start_repair("priya", "my dishwasher smells like burning plastic").session.id
+    assert engine.get_repair_state(sid).session.state == State.SAFETY_RECHECK
+    out = engine.safety_check(sid, danger_reported=False, details="no, nothing is burning")
+    assert out.session.state == State.MANUAL and out.session.appliance_id == "dishwasher"
+
+
+def test_the_user_can_still_correct_a_wrongly_guessed_appliance(engine):
+    sid = engine.start_repair("priya", "the washer is loud").session.id
+    engine.safety_check(sid, danger_reported=False)
+    out = engine.identify_appliance(sid, appliance_type="dishwasher")
+    assert out.session.appliance_id == "dishwasher" and out.session.state == State.MANUAL
+
+
+def test_asking_to_identify_again_with_nothing_new_keeps_the_identified_appliance(engine):
+    sid = engine.start_repair("priya", "my washer says E31").session.id
+    engine.safety_check(sid, danger_reported=False)  # confirms the washer by itself
+    again = engine.identify_appliance(sid)
+    assert again.session.state == State.MANUAL and again.session.appliance_id == "washer"
+    assert again.card["type"] == "appliance" and not again.refused
+
+
+def test_a_wrong_appliance_id_next_to_a_right_model_code_still_identifies(engine):
+    sid = engine.start_repair("priya", "something is beeping").session.id
+    engine.safety_check(sid, danger_reported=False)
+    out = engine.identify_appliance(
+        sid, appliance_id="kelvara-wm500x", model_code="WM-500-R4T9", appliance_type="washer"
+    )
+    assert out.session.appliance_id == "washer"
+
+
+def test_the_manual_id_works_as_an_appliance_id(engine):
+    sid = engine.start_repair("priya", "something is beeping").session.id
+    engine.safety_check(sid, danger_reported=False)
+    assert engine.identify_appliance(sid, appliance_id="kelvara-wm500").session.appliance_id == (
+        "washer"
+    )
